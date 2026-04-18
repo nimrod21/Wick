@@ -23,12 +23,14 @@
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
     "undici": "^6.19.8",
+    "ws": "^8.18.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
+    "@types/ws": "^8.5.12",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

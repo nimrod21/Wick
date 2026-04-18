@@ -6,6 +6,10 @@ import { nowSec } from '../util/time.js';
 import { registerSseRoutes } from './sse.js';
 import { registerSettingsRoutes } from './settings.js';
 import { registerAssetsRoutes } from './assets.js';
+import { registerCandlesRoutes } from './candles.js';
+import { registerEventsRoutes } from './events.js';
+import { registerOrdersRoutes } from './orders.js';
+import { registerPositionsRoutes } from './positions.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -24,6 +28,10 @@ export async function buildServer() {
   await app.register(registerSseRoutes);
   await app.register(registerSettingsRoutes, { prefix: '/api/settings' });
   await app.register(registerAssetsRoutes, { prefix: '/api/assets' });
+  await app.register(registerCandlesRoutes, { prefix: '/api/candles' });
+  await app.register(registerEventsRoutes, { prefix: '/api/events' });
+  await app.register(registerOrdersRoutes, { prefix: '/api/orders' });
+  await app.register(registerPositionsRoutes, { prefix: '/api/positions' });
 
   return app;
 }

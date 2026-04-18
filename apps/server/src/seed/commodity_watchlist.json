@@ -1,0 +1,8 @@
+[
+  { "symbol": "XAU/USD", "display_name": "Gold (spot)",        "type": "commodity", "exchange": "twelvedata", "tradeable_via": "alpaca", "tradeable_symbol": "GLD" },
+  { "symbol": "XAG/USD", "display_name": "Silver (spot)",      "type": "commodity", "exchange": "twelvedata", "tradeable_via": "alpaca", "tradeable_symbol": "SLV" },
+  { "symbol": "WTI/USD", "display_name": "Crude Oil WTI",      "type": "commodity", "exchange": "twelvedata", "tradeable_via": "alpaca", "tradeable_symbol": "USO" },
+  { "symbol": "GLD",     "display_name": "SPDR Gold ETF",      "type": "etf",       "exchange": "arca",       "tradeable_via": "alpaca" },
+  { "symbol": "SLV",     "display_name": "iShares Silver ETF", "type": "etf",       "exchange": "arca",       "tradeable_via": "alpaca" },
+  { "symbol": "USO",     "display_name": "US Oil Fund",        "type": "etf",       "exchange": "arca",       "tradeable_via": "alpaca" }
+]

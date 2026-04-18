@@ -4,7 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "probe": "tsx scripts/probe/run.ts"
+    "dev":          "pnpm -r --parallel dev",
+    "dev:server":   "pnpm --filter @cockpit/server dev",
+    "dev:web":      "pnpm --filter @cockpit/web dev",
+    "build":        "pnpm -r build",
+    "typecheck":    "pnpm -r typecheck",
+    "migrate":      "pnpm --filter @cockpit/server migrate",
+    "pm2:start":    "pm2 start ecosystem.config.cjs",
+    "pm2:stop":     "pm2 stop cockpit-server",
+    "pm2:logs":     "pm2 logs cockpit-server",
+    "pm2:status":   "pm2 status",
+    "probe":        "tsx scripts/probe/run.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
@@ -14,5 +24,8 @@
     "ws": "^8.18.0",
     "yahoo-finance2": "^2.13.0",
     "rss-parser": "^3.13.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
   }
 }

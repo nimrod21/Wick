@@ -1,0 +1,9 @@
+[
+  { "symbol": "BTCUSDT", "display_name": "Bitcoin",  "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "ETHUSDT", "display_name": "Ethereum", "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "SOLUSDT", "display_name": "Solana",   "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "BNBUSDT", "display_name": "BNB",      "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "XRPUSDT", "display_name": "XRP",      "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "ADAUSDT", "display_name": "Cardano",  "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" },
+  { "symbol": "LTCUSDT", "display_name": "Litecoin", "type": "crypto", "exchange": "binance", "tradeable_via": "ccxt" }
+]

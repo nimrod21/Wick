@@ -66,9 +66,11 @@ function Bar({ horizon, score }: { horizon: Horizon; score: ProbScore | null }) 
   const conf = score?.confidence ?? null;
   const pct = p !== null ? Math.round(p * 100) : 0;
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="pixel-font text-[9px] text-text-secondary w-8 uppercase">{horizon}</span>
-      <div className="flex-1 h-4 bg-bg-void border border-border-dim relative">
+    <div className="flex items-center gap-3">
+      <span className="pixel-font text-[9px] text-text-secondary w-8 uppercase shrink-0">
+        {horizon}
+      </span>
+      <div className="flex-1 h-5 bg-bg-void border border-border-dim relative">
         {p !== null ? (
           <div
             className={`absolute top-0 left-0 h-full ${probColor(p)}`}
@@ -77,14 +79,21 @@ function Bar({ horizon, score }: { horizon: Horizon; score: ProbScore | null }) 
         ) : null}
       </div>
       <span
-        className={`vt-font text-lg w-12 text-right ${p !== null ? probTextColor(p) : 'text-text-dim'}`}
+        className={`vt-font text-xl w-14 text-right shrink-0 ${p !== null ? probTextColor(p) : 'text-text-dim'}`}
       >
         {p !== null ? `${pct}%` : '—'}
       </span>
-      <span className="pixel-font text-[8px] text-text-dim w-16 text-right">
-        {conf !== null ? `c:${Math.round(conf * 100)}%` : ''}
-      </span>
     </div>
+  );
+}
+
+function ConfidenceRow({ score }: { score: ProbScore | null }) {
+  const conf = score?.confidence ?? null;
+  if (conf === null) return null;
+  return (
+    <span className="pixel-font text-[8px] text-text-dim uppercase tracking-wider">
+      conf {Math.round(conf * 100)}%
+    </span>
   );
 }
 
@@ -240,13 +249,18 @@ export function ProbabilityCard({ asset }: { asset: Asset }) {
       <button
         type="button"
         onClick={() => setModalOpen(true)}
-        className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-purple p-3 transition-colors"
+        className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-purple p-4 transition-colors"
       >
-        <div className="flex items-baseline justify-between mb-3">
+        <div className="flex items-baseline justify-between mb-1">
           <span className="pixel-font text-[11px] text-neon-cyan glow">{asset.symbol}</span>
-          <span className="vt-font text-sm text-text-secondary">{asset.displayName}</span>
+          <span className="vt-font text-base text-text-secondary">{asset.displayName}</span>
         </div>
-        <div className="space-y-2">
+        <div className="mb-3 h-4">
+          <ConfidenceRow
+            score={q1h.data?.score ?? q4h.data?.score ?? q24h.data?.score ?? null}
+          />
+        </div>
+        <div className="space-y-2.5">
           <Bar horizon="1h" score={q1h.data?.score ?? null} />
           <Bar horizon="4h" score={q4h.data?.score ?? null} />
           <Bar horizon="24h" score={q24h.data?.score ?? null} />

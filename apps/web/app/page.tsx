@@ -34,10 +34,10 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="pixel-font text-neon-cyan glow text-xs md:text-sm">DASHBOARD</h1>
-        <span className="vt-font text-text-secondary text-sm">
-          Synthesis • probability fusion • live firehose
+      <div className="flex items-center justify-between border-b-2 border-border-dim pb-3">
+        <h1 className="pixel-font text-neon-cyan glow text-sm tracking-widest">DASHBOARD</h1>
+        <span className="vt-font text-text-secondary text-base">
+          Synthesis · probability fusion · live firehose
         </span>
       </div>
 
@@ -57,7 +57,10 @@ export default function DashboardPage() {
               WEIGHTS
             </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+          >
             {assets.length === 0 ? (
               <div className="col-span-full bg-bg-terminal border-2 border-border-dim p-4 vt-font text-text-dim">
                 No crypto assets enabled. Add some in Settings to score them here.

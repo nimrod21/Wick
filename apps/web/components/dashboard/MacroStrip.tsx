@@ -54,11 +54,15 @@ function Pill({
   colorCls: string;
 }) {
   return (
-    <div className="bg-bg-terminal border-2 border-border-dim px-3 py-2 flex flex-col gap-1 min-w-[96px]">
-      <div className="pixel-font text-[9px] text-text-secondary uppercase">{label}</div>
-      <div className={`vt-font text-2xl glow ${colorCls}`}>{value}</div>
+    <div className="flex-1 bg-bg-terminal border-2 border-border-dim px-4 py-3 flex flex-col gap-1 min-w-[140px]">
+      <div className="pixel-font text-[9px] text-text-secondary uppercase tracking-widest">
+        {label}
+      </div>
+      <div className={`vt-font text-3xl glow ${colorCls} leading-none`}>{value}</div>
       {sub ? (
-        <div className="pixel-font text-[8px] text-text-dim uppercase">{sub}</div>
+        <div className="pixel-font text-[8px] text-text-dim uppercase tracking-wider whitespace-nowrap">
+          {sub}
+        </div>
       ) : null}
     </div>
   );
@@ -105,7 +109,7 @@ export function MacroStrip() {
     typeof fngVal === 'number' && Number.isFinite(fngVal) ? fngColor(fngVal) : 'text-text-primary';
 
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1">
+    <div className="flex gap-3">
       <Pill
         label="F&G"
         value={fngVal !== undefined ? fngVal.toFixed(0) : '—'}

@@ -41,22 +41,25 @@ function LiveModeIndicator() {
 
 export function Navbar() {
   return (
-    <nav className="fixed top-0 left-0 right-0 h-14 bg-bg-terminal border-b border-border-dim flex items-center px-4 gap-4 z-10">
-      <div className="flex items-center gap-1">
-        {TABS.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className="pixel-font text-[10px] text-text-secondary hover:text-neon-cyan px-2 py-1"
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </div>
-      <div className="ml-auto flex items-center gap-3">
-        <LiveModeIndicator />
-        <StatusDot />
-        <LocalClock />
+    <nav className="fixed top-0 left-0 right-0 h-14 bg-bg-terminal border-b-2 border-border-dim z-10">
+      <div className="h-full max-w-[1800px] mx-auto flex items-center px-6 gap-4">
+        <span className="pixel-font text-[11px] text-neon-cyan glow tracking-widest">COCKPIT</span>
+        <div className="flex items-center gap-1 ml-4">
+          {TABS.map((tab) => (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              className="pixel-font text-[9px] uppercase text-text-secondary hover:text-neon-cyan hover:glow px-3 py-2 tracking-wider transition-colors"
+            >
+              {tab.label}
+            </Link>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-4">
+          <LiveModeIndicator />
+          <StatusDot />
+          <LocalClock />
+        </div>
       </div>
     </nav>
   );

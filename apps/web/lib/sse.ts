@@ -22,7 +22,8 @@ export function useEventStream(
 
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
-    es.onmessage = (ev) => {
+
+    const handleFrame = (ev: MessageEvent) => {
       try {
         setLastEvent(JSON.parse(ev.data));
       } catch {
@@ -30,7 +31,23 @@ export function useEventStream(
       }
     };
 
+    // Server emits NAMED SSE events (event: candle / trade_tick / orderbook / ...).
+    // Browser EventSource.onmessage only catches default `message` frames, so we
+    // addEventListener for every requested topic.
+    const listeners: Array<[string, EventListener]> = [];
+    for (const topic of topics) {
+      const fn = handleFrame as EventListener;
+      es.addEventListener(topic, fn);
+      listeners.push([topic, fn]);
+    }
+    // Also handle default message and hello so clients that don't pass topics still work.
+    es.onmessage = handleFrame;
+    const helloFn = handleFrame as EventListener;
+    es.addEventListener('hello', helloFn);
+    listeners.push(['hello', helloFn]);
+
     return () => {
+      for (const [topic, fn] of listeners) es.removeEventListener(topic, fn);
       es.close();
       setConnected(false);
     };

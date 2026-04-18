@@ -24,5 +24,8 @@
     "ws": "^8.18.0",
     "yahoo-finance2": "^2.13.0",
     "rss-parser": "^3.13.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
   }
 }

@@ -2,72 +2,66 @@
 title Trading Cockpit
 cd /d "D:\Claude\trading-cockpit"
 
-REM Prepend portable Node 22 to PATH (better-sqlite3 Node 24 prebuilts are broken)
+REM Prepend portable Node 22 to PATH
 set "PATH=D:\Claude\Tools\node-v22;%PATH%"
 
-echo ================================================
-echo   Trading Cockpit - Launcher
-echo ================================================
-echo.
+REM Ensure pnpm global bin is in PATH too (where pnpm / pm2 live)
+set "PATH=%APPDATA%\npm;%PATH%"
 
-REM First-time setup: install deps if missing
+if not exist "logs" mkdir logs
+
+echo ================================================
+echo   Trading Cockpit
+echo ================================================
+
+REM --- first-run setup (skipped when already done) ---
 if not exist "node_modules" (
-  echo [1/4] Installing dependencies (first run only)...
-  call pnpm install
-  if errorlevel 1 goto :fail
-) else (
-  echo [1/4] Dependencies OK.
+  echo Installing dependencies (~1 min, one time)...
+  call pnpm install || goto :fail
 )
-
-REM Build server if dist missing
 if not exist "apps\server\dist\index.js" (
-  echo [2/4] Building server (first run only)...
-  call pnpm --filter @cockpit/server build
-  if errorlevel 1 goto :fail
-) else (
-  echo [2/4] Server build OK.
+  echo Building server (one time)...
+  call pnpm --filter @cockpit/server build || goto :fail
 )
-
-REM Initialize DB if missing
+if not exist "apps\web\.next" (
+  echo Building web (one time, ~1 min)...
+  call pnpm --filter @cockpit/web build || goto :fail
+)
 if not exist "apps\server\data\cockpit.db" (
-  echo [3/4] Running migrations (first run only)...
-  call pnpm migrate
-  if errorlevel 1 goto :fail
-) else (
-  echo [3/4] Database OK.
+  echo Initializing database...
+  call pnpm migrate || goto :fail
 )
 
-echo [4/4] Launching processes...
-echo.
+echo Starting server + web (hidden)...
 
-REM Server in its own window
-start "Cockpit Server" cmd /k "title Cockpit Server && set PATH=D:\Claude\Tools\node-v22;%%PATH%% && cd /d D:\Claude\trading-cockpit && node apps\server\dist\index.js"
+REM Launch hidden background processes, capture PIDs
+for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process node -ArgumentList 'apps\server\dist\index.js' -PassThru -RedirectStandardOutput 'logs\server.log' -RedirectStandardError 'logs\server.err' -WindowStyle Hidden).Id"') do set "SERVER_PID=%%P"
 
-REM Web dev server in its own window (takes ~5s to compile)
-start "Cockpit Web" cmd /k "title Cockpit Web && set PATH=D:\Claude\Tools\node-v22;%%PATH%% && cd /d D:\Claude\trading-cockpit && pnpm --filter @cockpit/web dev"
+for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process pnpm -ArgumentList '--filter','@cockpit/web','start' -PassThru -RedirectStandardOutput 'logs\web.log' -RedirectStandardError 'logs\web.err' -WindowStyle Hidden).Id"') do set "WEB_PID=%%P"
 
-REM Wait for web to compile before opening browser
-echo Waiting 8 seconds for Next.js to boot...
-timeout /t 8 /nobreak > nul
+echo Waiting for web to boot...
+timeout /t 6 /nobreak > nul
 
-REM Open browser
 start "" "http://127.0.0.1:3000"
 
 echo.
 echo ================================================
-echo   Trading Cockpit is running.
-echo   Web:    http://127.0.0.1:3000
-echo   Server: http://127.0.0.1:3001
+echo   RUNNING
+echo   http://127.0.0.1:3000
+echo   logs: D:\Claude\trading-cockpit\logs\
 echo.
-echo   To stop: run stop.bat OR close the two
-echo   "Cockpit Server" and "Cockpit Web" windows.
+echo   Press any key to STOP and exit.
 echo ================================================
-echo.
-pause
+pause > nul
+
+echo Stopping...
+if defined SERVER_PID taskkill /F /T /PID %SERVER_PID% > nul 2>&1
+if defined WEB_PID    taskkill /F /T /PID %WEB_PID%    > nul 2>&1
 exit /b 0
 
 :fail
 echo.
-echo *** Setup failed. Check the error above. ***
+echo *** Setup failed. Check output above. ***
+echo Logs: D:\Claude\trading-cockpit\logs\
 pause
 exit /b 1

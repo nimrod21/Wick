@@ -51,6 +51,30 @@ export type AlertEvent = BaseEvent & {
   payload: unknown;
 };
 
-export type Event = PriceCandleEvent | WhaleTxEvent | NewsEvent | IndicatorEvent | AlertEvent;
+export type TradeTickEvent = BaseEvent & {
+  kind: 'trade_tick';
+  assetId: AssetId;
+  price: number;
+  qty: number;
+  side: 'buy' | 'sell';
+};
+
+export type OrderbookLevel = [price: number, qty: number];
+
+export type OrderbookEvent = BaseEvent & {
+  kind: 'orderbook';
+  assetId: AssetId;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+};
+
+export type Event =
+  | PriceCandleEvent
+  | WhaleTxEvent
+  | NewsEvent
+  | IndicatorEvent
+  | AlertEvent
+  | TradeTickEvent
+  | OrderbookEvent;
 
 export type EventKind = Event['kind'];

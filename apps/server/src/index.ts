@@ -10,6 +10,16 @@ import { runMigrations } from './db/migrate.js';
 import { eventBus } from './core/event-bus.js';
 import { buildServer } from './api/server.js';
 import type { IndicatorEvent } from '@cockpit/shared';
+import {
+  backfillHistorical,
+  aggregateAll,
+  startAggregationCron,
+  stopAggregationCron,
+} from './collectors/crypto/binance-rest.js';
+import {
+  startBinanceWs,
+  stopBinanceWs,
+} from './collectors/crypto/binance-ws.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
@@ -130,10 +140,36 @@ async function main(): Promise<void> {
   const heartbeat = startHeartbeat();
   logger.info('heartbeat cron started (every 10s)');
 
+  // Phase 2 wave 1: crypto collectors.
+  // 1) Kick off historical backfill (non-blocking). When it finishes,
+  //    aggregate the last 90 days once to populate higher timeframes.
+  void backfillHistorical()
+    .then(async () => {
+      logger.info('backfill finished; running one-shot aggregation over 90d');
+      const ninetyDays = 90 * 24 * 3600;
+      await aggregateAll(nowSec() - ninetyDays);
+    })
+    .catch((err) => {
+      logger.error({ err }, 'backfill/aggregate pipeline failed');
+    });
+
+  // 2) Hourly cron keeps higher timeframes up-to-date as new 1m bars arrive.
+  startAggregationCron();
+
+  // 3) WS collector: connect and subscribe to every enabled binance asset.
+  //    Awaited so any immediate errors surface during boot.
+  try {
+    await startBinanceWs();
+  } catch (err) {
+    logger.error({ err }, 'binance ws failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
       heartbeat.stop();
+      stopAggregationCron();
+      await stopBinanceWs();
       await app.close();
       db.close();
     } catch (err) {

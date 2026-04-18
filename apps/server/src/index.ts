@@ -61,6 +61,11 @@ import {
   startCryptoPanic,
   stopCryptoPanic,
 } from './collectors/news/cryptopanic.js';
+import {
+  startFillScanCron,
+  stopFillScanCron,
+} from './execution/paper-mode.js';
+import { orderManager } from './execution/order-manager.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
@@ -338,6 +343,16 @@ async function main(): Promise<void> {
     logger.error({ err }, 'phase-8 alert engine failed to start (non-fatal)');
   }
 
+  // Phase 9: paper-mode fill-scan cron (crosses queued limit/stop orders
+  // against the latest 1m candle) + order-manager watcher for live
+  // brokers (polls ccxt/alpaca for status on open orders).
+  try {
+    startFillScanCron();
+    orderManager.start();
+  } catch (err) {
+    logger.error({ err }, 'phase-9 execution layer failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
@@ -360,6 +375,8 @@ async function main(): Promise<void> {
       stopCryptoPanic();
       stopProbabilityEngine();
       stopAlertEngine();
+      stopFillScanCron();
+      orderManager.stop();
       await stopBinanceWs();
       await app.close();
       db.close();

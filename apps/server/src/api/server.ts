@@ -10,6 +10,7 @@ import { registerCandlesRoutes } from './candles.js';
 import { registerEventsRoutes } from './events.js';
 import { registerOrdersRoutes } from './orders.js';
 import { registerPositionsRoutes } from './positions.js';
+import { registerWhalesRoutes } from './whales.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -32,6 +33,7 @@ export async function buildServer() {
   await app.register(registerEventsRoutes, { prefix: '/api/events' });
   await app.register(registerOrdersRoutes, { prefix: '/api/orders' });
   await app.register(registerPositionsRoutes, { prefix: '/api/positions' });
+  await app.register(registerWhalesRoutes, { prefix: '/api/whales' });
 
   return app;
 }

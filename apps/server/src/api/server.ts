@@ -13,6 +13,8 @@ import { registerPositionsRoutes } from './positions.js';
 import { registerWhalesRoutes } from './whales.js';
 import { registerIndicatorsRoutes } from './indicators.js';
 import { registerNewsRoutes } from './news.js';
+import { registerAlertsRoutes } from './alerts.js';
+import { registerProbabilityRoutes } from './probability.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -38,6 +40,8 @@ export async function buildServer() {
   await app.register(registerWhalesRoutes, { prefix: '/api/whales' });
   await app.register(registerIndicatorsRoutes, { prefix: '/api/indicators' });
   await app.register(registerNewsRoutes, { prefix: '/api/news' });
+  await app.register(registerAlertsRoutes, { prefix: '/api/alerts' });
+  await app.register(registerProbabilityRoutes, { prefix: '/api/probability' });
 
   return app;
 }

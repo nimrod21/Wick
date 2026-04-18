@@ -66,6 +66,10 @@ import {
   stopFillScanCron,
 } from './execution/paper-mode.js';
 import { orderManager } from './execution/order-manager.js';
+import {
+  reconcileCcxtOnBoot,
+  stopCcxtPolls,
+} from './execution/crypto-ccxt.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
@@ -353,6 +357,12 @@ async function main(): Promise<void> {
     logger.error({ err }, 'phase-9 execution layer failed to start (non-fatal)');
   }
 
+  // Phase 10: ccxt boot-time reconciliation. Best-effort; skipped when
+  // no binance key is present. Non-blocking so we don't delay listen().
+  void reconcileCcxtOnBoot().catch((err) => {
+    logger.warn({ err }, 'ccxt reconcile failed (non-fatal)');
+  });
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
@@ -377,6 +387,7 @@ async function main(): Promise<void> {
       stopAlertEngine();
       stopFillScanCron();
       orderManager.stop();
+      stopCcxtPolls();
       await stopBinanceWs();
       await app.close();
       db.close();

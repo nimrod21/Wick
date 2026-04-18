@@ -43,6 +43,11 @@ import {
   startSnapshotCron,
   stopSnapshotCron,
 } from './core/snapshot-job.js';
+import { startAlertEngine, stopAlertEngine } from './core/alert-engine.js';
+import {
+  startProbabilityEngine,
+  stopProbabilityEngine,
+} from './core/probability-engine.js';
 import { startFearGreed, stopFearGreed } from './collectors/macro/fear-greed.js';
 import { startDxyVix, stopDxyVix } from './collectors/macro/dxy-vix.js';
 import { startFundingOi, stopFundingOi } from './collectors/macro/funding-oi.js';
@@ -316,6 +321,23 @@ async function main(): Promise<void> {
     logger.error({ err }, 'phase-5 collectors failed to start (non-fatal)');
   }
 
+  // Phase 7: probability engine — runs after collectors so signals have
+  // at least a chance to have data. Scores assets every minute.
+  try {
+    startProbabilityEngine();
+  } catch (err) {
+    logger.error({ err }, 'phase-7 probability engine failed to start (non-fatal)');
+  }
+
+  // Phase 8: alert engine — subscribes to the event bus and fires on
+  // matching rules. Must start *after* collectors so it begins buffering
+  // candles for the `price_move` rolling window.
+  try {
+    startAlertEngine();
+  } catch (err) {
+    logger.error({ err }, 'phase-8 alert engine failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
@@ -336,6 +358,8 @@ async function main(): Promise<void> {
       stopFred();
       stopRssNews();
       stopCryptoPanic();
+      stopProbabilityEngine();
+      stopAlertEngine();
       await stopBinanceWs();
       await app.close();
       db.close();

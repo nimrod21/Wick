@@ -68,6 +68,15 @@ export type OrderbookEvent = BaseEvent & {
   asks: OrderbookLevel[];
 };
 
+export type ProbabilityEvent = BaseEvent & {
+  kind: 'probability';
+  assetId: AssetId;
+  horizon: '1h' | '4h' | '24h';
+  bullishProb: number;
+  confidence: number;
+  // contributingSignals omitted from streamed event for size; re-fetch via API if needed
+};
+
 export type Event =
   | PriceCandleEvent
   | WhaleTxEvent
@@ -75,6 +84,7 @@ export type Event =
   | IndicatorEvent
   | AlertEvent
   | TradeTickEvent
-  | OrderbookEvent;
+  | OrderbookEvent
+  | ProbabilityEvent;
 
 export type EventKind = Event['kind'];

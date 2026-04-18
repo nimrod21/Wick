@@ -30,10 +30,25 @@ import {
   stopFinnhubNews,
 } from './collectors/stocks/finnhub.js';
 import { startYahoo, stopYahoo } from './collectors/stocks/yahoo.js';
+import {
+  startEtherscan,
+  stopEtherscan,
+} from './collectors/onchain/eth-etherscan.js';
+import { startHelius, stopHelius } from './collectors/onchain/sol-helius.js';
+import {
+  startBlockstream,
+  stopBlockstream,
+} from './collectors/onchain/btc-blockstream.js';
+import {
+  startSnapshotCron,
+  stopSnapshotCron,
+} from './core/snapshot-job.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
 import commodityWatchlist from './seed/commodity_watchlist.json' with { type: 'json' };
+import whaleAddressesSeed from './seed/whale_addresses.json' with { type: 'json' };
+import ignoreAddressesSeed from './seed/ignore_addresses.json' with { type: 'json' };
 
 interface SeedAsset {
   symbol: string;
@@ -42,6 +57,19 @@ interface SeedAsset {
   exchange?: string | null;
   tradeable_via?: 'ccxt' | 'alpaca' | null;
   tradeable_symbol?: string | null;
+}
+
+interface SeedWhale {
+  chain: 'eth' | 'sol' | 'btc';
+  address: string;
+  label?: string | null;
+  tags?: string[];
+}
+
+interface SeedIgnore {
+  chain: 'eth' | 'sol' | 'btc';
+  address: string;
+  label?: string | null;
 }
 
 function ensureMasterKey(): void {
@@ -111,6 +139,62 @@ function loadSeedsIfEmpty(): void {
   logger.info({ inserted: all.length }, 'seed watchlists loaded');
 }
 
+function loadWhaleSeedsIfEmpty(): void {
+  const { count } = db
+    .prepare('SELECT COUNT(*) AS count FROM whale_addresses')
+    .get() as { count: number };
+  if (count === 0) {
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO whale_addresses
+         (chain, address, label, tags_json, added_at, enabled)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+    );
+    const tx = db.transaction((rows: SeedWhale[]) => {
+      const ts = nowSec();
+      for (const r of rows) {
+        const addr = r.chain === 'eth' ? r.address.toLowerCase() : r.address;
+        insert.run(
+          r.chain,
+          addr,
+          r.label ?? null,
+          r.tags ? JSON.stringify(r.tags) : null,
+          ts,
+        );
+      }
+    });
+    tx(whaleAddressesSeed as SeedWhale[]);
+    logger.info(
+      { inserted: (whaleAddressesSeed as SeedWhale[]).length },
+      'seed whale_addresses loaded',
+    );
+  } else {
+    logger.info({ count }, 'whale_addresses populated — skipping seed');
+  }
+
+  const { count: ignoreCount } = db
+    .prepare('SELECT COUNT(*) AS count FROM ignore_addresses')
+    .get() as { count: number };
+  if (ignoreCount === 0) {
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO ignore_addresses (chain, address, label)
+       VALUES (?, ?, ?)`,
+    );
+    const tx = db.transaction((rows: SeedIgnore[]) => {
+      for (const r of rows) {
+        const addr = r.chain === 'eth' ? r.address.toLowerCase() : r.address;
+        insert.run(r.chain, addr, r.label ?? null);
+      }
+    });
+    tx(ignoreAddressesSeed as SeedIgnore[]);
+    logger.info(
+      { inserted: (ignoreAddressesSeed as SeedIgnore[]).length },
+      'seed ignore_addresses loaded',
+    );
+  } else {
+    logger.info({ count: ignoreCount }, 'ignore_addresses populated — skipping seed');
+  }
+}
+
 function startHeartbeat(): cron.ScheduledTask {
   let seq = 1;
   // "every 10 seconds" cron expression (6-field, with seconds)
@@ -139,6 +223,7 @@ async function main(): Promise<void> {
   );
 
   loadSeedsIfEmpty();
+  loadWhaleSeedsIfEmpty();
 
   const app = await buildServer();
   await app.listen({ host: config.server.host, port: config.server.port });
@@ -187,6 +272,16 @@ async function main(): Promise<void> {
     logger.error({ err }, 'phase-3 collectors failed to start (non-fatal)');
   }
 
+  // Phase 4: whale tracker collectors + snapshot-job cron.
+  try {
+    startEtherscan();
+    startHelius();
+    startBlockstream();
+    startSnapshotCron();
+  } catch (err) {
+    logger.error({ err }, 'phase-4 collectors failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
@@ -196,6 +291,10 @@ async function main(): Promise<void> {
       stopTwelveData();
       stopFinnhubNews();
       stopYahoo();
+      stopEtherscan();
+      stopHelius();
+      stopBlockstream();
+      stopSnapshotCron();
       await stopBinanceWs();
       await app.close();
       db.close();

@@ -1,10 +1,14 @@
-export default function Page() {
+'use client';
+
+import { NonCryptoLayout } from '@/components/trading/NonCryptoLayout';
+
+export default function CommoditiesPage() {
   return (
-    <div>
-      <h1 className="pixel-font text-neon-cyan glow text-xs">TRADING — COMMODITIES</h1>
-      <p className="vt-font text-text-secondary text-lg mt-4">
-        Chart / orderbook / order-entry land in Phase 2 or Phase 3.
-      </p>
-    </div>
+    <NonCryptoLayout
+      tradingType="commodities"
+      assetTypes={['commodity']}
+      symbolFilter={(s) => s === 'WTI/USD'}
+      proxyNote="Display shows WTI/USD crude oil. Paper orders execute via USO on Alpaca."
+    />
   );
 }

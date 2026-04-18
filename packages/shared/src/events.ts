@@ -1,4 +1,5 @@
 import type { AssetId, Timeframe } from './assets.js';
+import type { OrderStatus } from './orders.js';
 
 export type BaseEvent = {
   id: number;
@@ -77,6 +78,16 @@ export type ProbabilityEvent = BaseEvent & {
   // contributingSignals omitted from streamed event for size; re-fetch via API if needed
 };
 
+export type OrderStatusEvent = BaseEvent & {
+  kind: 'order_status';
+  orderId: number;
+  clientOrderId: string;
+  assetId: AssetId;
+  status: OrderStatus;
+  filledQty: number;
+  avgFillPrice: number | null;
+};
+
 export type Event =
   | PriceCandleEvent
   | WhaleTxEvent
@@ -85,6 +96,19 @@ export type Event =
   | AlertEvent
   | TradeTickEvent
   | OrderbookEvent
-  | ProbabilityEvent;
+  | ProbabilityEvent
+  | OrderStatusEvent;
 
 export type EventKind = Event['kind'];
+
+export const VALID_EVENT_KINDS: readonly EventKind[] = [
+  'candle',
+  'whale_tx',
+  'news',
+  'indicator',
+  'alert',
+  'trade_tick',
+  'orderbook',
+  'probability',
+  'order_status',
+];

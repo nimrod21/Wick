@@ -13,6 +13,7 @@ const VALID_KINDS: readonly EventKind[] = [
   'trade_tick',
   'orderbook',
   'probability',
+  'order_status',
 ];
 
 const querySchema = z.object({

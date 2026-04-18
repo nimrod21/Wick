@@ -15,6 +15,7 @@ import { registerIndicatorsRoutes } from './indicators.js';
 import { registerNewsRoutes } from './news.js';
 import { registerAlertsRoutes } from './alerts.js';
 import { registerProbabilityRoutes } from './probability.js';
+import { registerRuntimeRoutes } from './runtime.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -42,6 +43,7 @@ export async function buildServer() {
   await app.register(registerNewsRoutes, { prefix: '/api/news' });
   await app.register(registerAlertsRoutes, { prefix: '/api/alerts' });
   await app.register(registerProbabilityRoutes, { prefix: '/api/probability' });
+  await app.register(registerRuntimeRoutes, { prefix: '/api/runtime' });
 
   return app;
 }

@@ -37,6 +37,12 @@ interface CandlesResponse {
 interface AssetListProps {
   tradingType: TradingType;
   assetTypes: AssetKind[];
+  /**
+   * Optional post-fetch filter. If provided, only assets whose symbol
+   * satisfies the predicate are rendered. Used by metals/commodities tabs
+   * to narrow down the `commodity` asset type to a specific pair (e.g. XAU/USD).
+   */
+  symbolFilter?: (symbol: string) => boolean;
 }
 
 interface PriceInfo {
@@ -57,7 +63,11 @@ function formatPct(n: number | null): string {
   return `${sign}${n.toFixed(2)}%`;
 }
 
-export function AssetList({ tradingType, assetTypes }: AssetListProps) {
+export function AssetList({
+  tradingType,
+  assetTypes,
+  symbolFilter,
+}: AssetListProps) {
   const [query, setQuery] = useState('');
   const activeId = useTradingStore((s) => s.activeAsset[tradingType]);
   const setActiveAsset = useTradingStore((s) => s.setActiveAsset);
@@ -80,7 +90,8 @@ export function AssetList({ tradingType, assetTypes }: AssetListProps) {
   });
 
   const assets = useMemo<Asset[]>(() => {
-    const list = (assetsData ?? []).filter((a) => a.enabled !== false);
+    let list = (assetsData ?? []).filter((a) => a.enabled !== false);
+    if (symbolFilter) list = list.filter((a) => symbolFilter(a.symbol));
     const q = query.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
@@ -88,7 +99,7 @@ export function AssetList({ tradingType, assetTypes }: AssetListProps) {
         a.symbol.toLowerCase().includes(q) ||
         a.displayName.toLowerCase().includes(q),
     );
-  }, [assetsData, query]);
+  }, [assetsData, query, symbolFilter]);
 
   const priceQueries = useQueries({
     queries: assets.map((a) => ({

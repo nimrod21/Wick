@@ -20,6 +20,16 @@ import {
   startBinanceWs,
   stopBinanceWs,
 } from './collectors/crypto/binance-ws.js';
+import { startScheduler, stopScheduler } from './jobs/scheduler.js';
+import {
+  startTwelveData,
+  stopTwelveData,
+} from './collectors/stocks/twelvedata.js';
+import {
+  startFinnhubNews,
+  stopFinnhubNews,
+} from './collectors/stocks/finnhub.js';
+import { startYahoo, stopYahoo } from './collectors/stocks/yahoo.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
@@ -164,11 +174,28 @@ async function main(): Promise<void> {
     logger.error({ err }, 'binance ws failed to start (non-fatal)');
   }
 
+  // Phase 3: non-crypto collectors + cron scheduler.
+  // Each start() is safe to call even if its API key is missing — the
+  // collector just no-ops. The scheduler drives the per-minute/per-5-min
+  // ticks independently.
+  try {
+    startTwelveData();
+    startFinnhubNews();
+    startYahoo();
+    startScheduler();
+  } catch (err) {
+    logger.error({ err }, 'phase-3 collectors failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
       heartbeat.stop();
+      stopScheduler();
       stopAggregationCron();
+      stopTwelveData();
+      stopFinnhubNews();
+      stopYahoo();
       await stopBinanceWs();
       await app.close();
       db.close();

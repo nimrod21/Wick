@@ -2,11 +2,8 @@
 title Trading Cockpit
 cd /d "D:\Claude\trading-cockpit"
 
-REM Prepend portable Node 22 to PATH
-set "PATH=D:\Claude\Tools\node-v22;%PATH%"
-
-REM Ensure pnpm global bin is in PATH too (where pnpm / pm2 live)
-set "PATH=%APPDATA%\npm;%PATH%"
+REM Portable Node 22 + pnpm global bin on PATH
+set "PATH=D:\Claude\Tools\node-v22;%APPDATA%\npm;%PATH%"
 
 if not exist "logs" mkdir logs
 
@@ -14,33 +11,36 @@ echo ================================================
 echo   Trading Cockpit
 echo ================================================
 
-REM --- first-run setup (skipped when already done) ---
 if not exist "node_modules" (
-  echo Installing dependencies (~1 min, one time)...
-  call pnpm install || goto :fail
+  echo Installing dependencies, about 1 minute, one time only...
+  call pnpm install
+  if errorlevel 1 goto :fail
 )
+
 if not exist "apps\server\dist\index.js" (
-  echo Building server (one time)...
-  call pnpm --filter @cockpit/server build || goto :fail
+  echo Building server, one time only...
+  call pnpm --filter @cockpit/server build
+  if errorlevel 1 goto :fail
 )
-if not exist "apps\web\.next" (
-  echo Building web (one time, ~1 min)...
-  call pnpm --filter @cockpit/web build || goto :fail
-)
+
 if not exist "apps\server\data\cockpit.db" (
   echo Initializing database...
-  call pnpm migrate || goto :fail
+  call pnpm migrate
+  if errorlevel 1 goto :fail
 )
 
-echo Starting server + web (hidden)...
+echo Checking for pending migrations...
+call pnpm migrate
 
-REM Launch hidden background processes, capture PIDs
-for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process node -ArgumentList 'apps\server\dist\index.js' -PassThru -RedirectStandardOutput 'logs\server.log' -RedirectStandardError 'logs\server.err' -WindowStyle Hidden).Id"') do set "SERVER_PID=%%P"
+echo Starting server (hidden)...
+for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process cmd -ArgumentList '/c','node apps\server\dist\index.js ^> logs\server.log 2^>^&1' -PassThru -WindowStyle Hidden).Id"') do set "SERVER_PID=%%P"
 
-for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process pnpm -ArgumentList '--filter','@cockpit/web','start' -PassThru -RedirectStandardOutput 'logs\web.log' -RedirectStandardError 'logs\web.err' -WindowStyle Hidden).Id"') do set "WEB_PID=%%P"
+echo Starting web (hidden)...
+for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process cmd -ArgumentList '/c','pnpm --filter @cockpit/web dev ^> logs\web.log 2^>^&1' -PassThru -WindowStyle Hidden).Id"') do set "WEB_PID=%%P"
 
-echo Waiting for web to boot...
-timeout /t 6 /nobreak > nul
+echo server pid=%SERVER_PID%  web pid=%WEB_PID%
+echo Waiting 8 seconds for web to boot...
+timeout /t 8 /nobreak > nul
 
 start "" "http://127.0.0.1:3000"
 
@@ -48,20 +48,21 @@ echo.
 echo ================================================
 echo   RUNNING
 echo   http://127.0.0.1:3000
-echo   logs: D:\Claude\trading-cockpit\logs\
+echo   Logs: D:\Claude\trading-cockpit\logs\
 echo.
-echo   Press any key to STOP and exit.
+echo   Press any key in THIS window to STOP.
 echo ================================================
 pause > nul
 
 echo Stopping...
 if defined SERVER_PID taskkill /F /T /PID %SERVER_PID% > nul 2>&1
 if defined WEB_PID    taskkill /F /T /PID %WEB_PID%    > nul 2>&1
+REM Kill leftover node/pnpm children just in case
+taskkill /F /IM node.exe > nul 2>&1
 exit /b 0
 
 :fail
 echo.
-echo *** Setup failed. Check output above. ***
-echo Logs: D:\Claude\trading-cockpit\logs\
+echo *** Setup failed. Check logs above. ***
 pause
 exit /b 1

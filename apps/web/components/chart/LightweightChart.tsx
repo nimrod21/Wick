@@ -18,6 +18,7 @@ import type { Timeframe } from '@/lib/store';
 interface LightweightChartProps {
   assetId: number;
   timeframe: Timeframe;
+  /** Optional fixed height. If omitted, chart fills its parent (which must have measured height). */
   height?: number;
 }
 
@@ -75,12 +76,13 @@ function toVolume(r: RawCandle): HistogramData<UTCTimestamp> {
   };
 }
 
-export function LightweightChart({ assetId, timeframe, height = 400 }: LightweightChartProps) {
+export function LightweightChart({ assetId, timeframe, height }: LightweightChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<RawCandle | null>(null);
+  const fitToParent = height === undefined;
 
   const { data, isLoading, error } = useQuery<CandlesResponse>({
     queryKey: ['candles', assetId, timeframe],
@@ -115,7 +117,7 @@ export function LightweightChart({ assetId, timeframe, height = 400 }: Lightweig
         horzLine: { color: '#00ffff', labelBackgroundColor: '#0a0014' },
       },
       width: container.clientWidth,
-      height,
+      height: height ?? container.clientHeight,
     });
 
     const candleSeries = chart.addCandlestickSeries({
@@ -141,8 +143,9 @@ export function LightweightChart({ assetId, timeframe, height = 400 }: Lightweig
 
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const width = entry.contentRect.width;
-        chart.applyOptions({ width });
+        const w = entry.contentRect.width;
+        const h = fitToParent ? entry.contentRect.height : height;
+        chart.applyOptions({ width: w, height: h });
       }
     });
     ro.observe(container);
@@ -211,7 +214,10 @@ export function LightweightChart({ assetId, timeframe, height = 400 }: Lightweig
   }, [lastEvent, assetId, timeframe]);
 
   return (
-    <div className="relative w-full" style={{ height }}>
+    <div
+      className="relative w-full h-full overflow-hidden"
+      style={height !== undefined ? { height } : undefined}
+    >
       <div ref={containerRef} className="absolute inset-0" />
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

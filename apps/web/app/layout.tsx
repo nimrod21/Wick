@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Scanlines />
           <Navbar />
           <NotificationsBridge />
-          <main className="pt-16 pb-8 px-6 max-w-[1800px] mx-auto">{children}</main>
+          <main className="pt-20 pb-8 px-6">{children}</main>
         </QueryProvider>
       </body>
     </html>

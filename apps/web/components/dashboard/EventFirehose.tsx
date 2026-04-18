@@ -165,16 +165,18 @@ export function EventFirehose() {
               return (
                 <li
                   key={`${e.kind}-${e.id ?? i}-${ts}`}
-                  className="px-3 py-2 flex items-start gap-2 hover:bg-bg-elevated"
+                  className="px-3 py-2 grid grid-cols-[16px_90px_1fr_auto] items-center gap-3 hover:bg-bg-elevated"
                 >
-                  <span className={`pixel-font text-[10px] ${color} glow w-4`}>{icon}</span>
-                  <span className={`pixel-font text-[8px] uppercase ${color} w-16`}>
+                  <span className={`pixel-font text-[10px] ${color} glow text-center`}>
+                    {icon}
+                  </span>
+                  <span className={`pixel-font text-[8px] uppercase ${color} tracking-wider truncate`}>
                     {e.kind}
                   </span>
-                  <span className="vt-font text-sm text-text-primary flex-1 break-all">
+                  <span className="vt-font text-sm text-text-primary truncate">
                     {summarize(e)}
                   </span>
-                  <span className="pixel-font text-[8px] text-text-dim w-8 text-right">
+                  <span className="pixel-font text-[8px] text-text-dim text-right tabular-nums w-10 shrink-0">
                     {relTime(ts, now)}
                   </span>
                 </li>

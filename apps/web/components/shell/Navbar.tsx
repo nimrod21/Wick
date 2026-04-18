@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { StatusDot } from './StatusDot';
@@ -39,21 +40,39 @@ function LiveModeIndicator() {
   );
 }
 
+function isActive(pathname: string | null, href: string): boolean {
+  if (!pathname) return false;
+  if (href === '/') return pathname === '/';
+  // /trading/crypto also highlights the "Trading" tab
+  if (href.startsWith('/trading/')) {
+    return pathname.startsWith('/trading/');
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export function Navbar() {
+  const pathname = usePathname();
   return (
     <nav className="fixed top-0 left-0 right-0 h-14 bg-bg-terminal border-b-2 border-border-dim z-10">
-      <div className="h-full max-w-[1800px] mx-auto flex items-center px-6 gap-4">
+      <div className="h-full flex items-center px-6 gap-6">
         <span className="pixel-font text-[11px] text-neon-cyan glow tracking-widest">COCKPIT</span>
-        <div className="flex items-center gap-1 ml-4">
-          {TABS.map((tab) => (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className="pixel-font text-[9px] uppercase text-text-secondary hover:text-neon-cyan hover:glow px-3 py-2 tracking-wider transition-colors"
-            >
-              {tab.label}
-            </Link>
-          ))}
+        <div className="flex items-center gap-1">
+          {TABS.map((tab) => {
+            const active = isActive(pathname, tab.href);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={
+                  active
+                    ? 'pixel-font text-[9px] uppercase px-3 py-2 tracking-wider border-b-2 border-neon-cyan text-neon-cyan glow -mb-[2px]'
+                    : 'pixel-font text-[9px] uppercase px-3 py-2 tracking-wider border-b-2 border-transparent text-text-secondary hover:text-neon-cyan transition-colors -mb-[2px]'
+                }
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
         </div>
         <div className="ml-auto flex items-center gap-4">
           <LiveModeIndicator />

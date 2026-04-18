@@ -120,12 +120,12 @@ function SignalsModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl bg-bg-terminal border-2 border-neon-purple shadow-[0_0_20px_var(--neon-purple)]"
+        className="w-full max-w-3xl bg-bg-terminal border-2 border-neon-purple shadow-[0_0_20px_var(--neon-purple)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-dim">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-dim">
           <div className="flex items-baseline gap-3">
-            <span className="pixel-font text-[10px] text-neon-purple glow">
+            <span className="pixel-font text-[11px] text-neon-purple glow">
               {asset.symbol} SIGNALS
             </span>
             <span className="vt-font text-text-secondary text-lg">
@@ -134,18 +134,18 @@ function SignalsModal({
           </div>
           <button
             type="button"
-            className="pixel-font text-[10px] text-text-secondary hover:text-neon-red px-2 py-1 border border-border-dim"
+            className="pixel-font text-[10px] text-text-secondary hover:text-neon-red px-3 py-1 border border-border-dim"
             onClick={onClose}
           >
             X
           </button>
         </div>
-        <div className="flex gap-2 px-4 py-2 border-b border-border-dim">
+        <div className="flex gap-2 px-5 py-3 border-b border-border-dim">
           {HORIZONS.map((h) => (
             <button
               type="button"
               key={h}
-              className={`pixel-font text-[9px] px-2 py-1 border ${
+              className={`pixel-font text-[9px] px-3 py-1 border ${
                 horizon === h
                   ? 'border-neon-purple text-neon-purple glow'
                   : 'border-border-dim text-text-secondary hover:text-neon-cyan'
@@ -156,7 +156,7 @@ function SignalsModal({
             </button>
           ))}
         </div>
-        <div className="p-4 space-y-2">
+        <div className="p-5 space-y-3">
           {isLoading ? (
             <div className="vt-font text-neon-cyan glow">LOADING…</div>
           ) : signals.length === 0 ? (
@@ -170,26 +170,32 @@ function SignalsModal({
               const barColor = probColor(0.5 + s.valueNormalized / 2);
               const width = Math.abs(pct);
               return (
-                <div key={s.name} className="flex items-center gap-2 text-sm">
-                  <span className="pixel-font text-[9px] text-text-secondary w-44 uppercase">
-                    {s.name}
-                  </span>
-                  <div className="flex-1 h-3 bg-bg-void border border-border-dim relative">
-                    <div
-                      className={`absolute top-0 h-full ${barColor}`}
-                      style={{
-                        width: `${width / 2}%`,
-                        left: s.valueNormalized >= 0 ? '50%' : `${50 - width / 2}%`,
-                      }}
-                    />
-                    <div className="absolute left-1/2 top-0 h-full w-px bg-border-dim" />
+                <div key={s.name} className="flex flex-col gap-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="pixel-font text-[9px] text-text-secondary uppercase tracking-wider break-all">
+                      {s.name.replace(/_/g, ' ')}
+                    </span>
+                    <span className="pixel-font text-[8px] text-text-dim shrink-0 tabular-nums">
+                      w {s.weight.toFixed(1)}
+                    </span>
                   </div>
-                  <span className={`vt-font text-sm w-12 text-right ${color}`}>
-                    {pct > 0 ? `+${pct}` : pct}
-                  </span>
-                  <span className="pixel-font text-[8px] text-text-dim w-10 text-right">
-                    w:{s.weight.toFixed(1)}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-3 bg-bg-void border border-border-dim relative">
+                      <div
+                        className={`absolute top-0 h-full ${barColor}`}
+                        style={{
+                          width: `${width / 2}%`,
+                          left: s.valueNormalized >= 0 ? '50%' : `${50 - width / 2}%`,
+                        }}
+                      />
+                      <div className="absolute left-1/2 top-0 h-full w-px bg-border-dim" />
+                    </div>
+                    <span
+                      className={`vt-font text-base w-14 text-right shrink-0 tabular-nums ${color}`}
+                    >
+                      {pct > 0 ? `+${pct}` : pct}
+                    </span>
+                  </div>
                 </div>
               );
             })

@@ -134,15 +134,28 @@ function ServiceRow({ meta, entry }: { meta: ServiceMeta; entry: KeyEntry }) {
   );
 }
 
+interface ServerKeyRow {
+  service: string;
+  present: boolean;
+  masked: string | null;
+  addedAt: number | null;
+}
+
 export function ApiKeysCard() {
-  const { data, isLoading, error } = useQuery<KeyEntry[]>({
+  const { data, isLoading, error } = useQuery<{ services: ServerKeyRow[] }>({
     queryKey: ['settings', 'keys'],
-    queryFn: () => api.get<KeyEntry[]>('/api/settings/keys'),
+    queryFn: () => api.get<{ services: ServerKeyRow[] }>('/api/settings/keys'),
   });
 
   const byService = useMemo(() => {
     const m = new Map<string, KeyEntry>();
-    (data ?? []).forEach((k) => m.set(k.service, k));
+    (data?.services ?? []).forEach((k) => {
+      m.set(k.service, {
+        service: k.service,
+        status: k.present ? 'connected' : 'missing',
+        masked: k.masked,
+      });
+    });
     return m;
   }, [data]);
 

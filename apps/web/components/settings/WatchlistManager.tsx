@@ -9,7 +9,7 @@ type AssetType = 'crypto' | 'stock' | 'commodity' | 'etf';
 interface Asset {
   id: number;
   symbol: string;
-  display_name: string | null;
+  displayName: string | null;
   type: AssetType;
   enabled: boolean;
 }
@@ -31,8 +31,10 @@ function useAssetsByTypes(types: AssetType[]) {
   return useQuery<Asset[]>({
     queryKey: ['assets', ...types],
     queryFn: async () => {
-      const results = await Promise.all(types.map((t) => api.get<Asset[]>(`/api/assets?type=${t}`)));
-      return results.flat();
+      const results = await Promise.all(
+        types.map((t) => api.get<{ assets: Asset[] }>(`/api/assets?type=${t}`)),
+      );
+      return results.flatMap((r) => r.assets ?? []);
     },
   });
 }
@@ -51,7 +53,7 @@ function AssetRow({ asset, onChanged }: { asset: Asset; onChanged: () => void })
   return (
     <div className="flex items-center gap-3 border border-border-dim bg-bg-terminal px-3 py-2">
       <span className="pixel-font text-[11px] text-neon-cyan w-24">{asset.symbol}</span>
-      <span className="text-text-secondary text-sm flex-1 truncate">{asset.display_name ?? asset.symbol}</span>
+      <span className="text-text-secondary text-sm flex-1 truncate">{asset.displayName ?? asset.symbol}</span>
       <label className="flex items-center gap-2 text-xs text-text-dim cursor-pointer">
         <input
           type="checkbox"

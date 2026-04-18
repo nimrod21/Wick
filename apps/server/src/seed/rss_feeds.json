@@ -1,0 +1,8 @@
+[
+  { "source": "CoinDesk",       "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",   "category": "crypto" },
+  { "source": "Cointelegraph",  "url": "https://cointelegraph.com/rss",                      "category": "crypto" },
+  { "source": "The Block",      "url": "https://www.theblock.co/rss.xml",                    "category": "crypto" },
+  { "source": "Decrypt",        "url": "https://decrypt.co/feed",                            "category": "crypto" },
+  { "source": "Bloomberg Markets", "url": "https://feeds.bloomberg.com/markets/news.rss",   "category": "markets" },
+  { "source": "WSJ Markets",    "url": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",      "category": "markets" }
+]

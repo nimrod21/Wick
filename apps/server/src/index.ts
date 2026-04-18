@@ -43,6 +43,19 @@ import {
   startSnapshotCron,
   stopSnapshotCron,
 } from './core/snapshot-job.js';
+import { startFearGreed, stopFearGreed } from './collectors/macro/fear-greed.js';
+import { startDxyVix, stopDxyVix } from './collectors/macro/dxy-vix.js';
+import { startFundingOi, stopFundingOi } from './collectors/macro/funding-oi.js';
+import {
+  startBtcDominance,
+  stopBtcDominance,
+} from './collectors/macro/btc-dominance.js';
+import { startFred, stopFred } from './collectors/macro/fred.js';
+import { startRssNews, stopRssNews } from './collectors/news/rss.js';
+import {
+  startCryptoPanic,
+  stopCryptoPanic,
+} from './collectors/news/cryptopanic.js';
 
 import cryptoWatchlist from './seed/crypto_watchlist.json' with { type: 'json' };
 import stockWatchlist from './seed/stock_watchlist.json' with { type: 'json' };
@@ -282,6 +295,27 @@ async function main(): Promise<void> {
     logger.error({ err }, 'phase-4 collectors failed to start (non-fatal)');
   }
 
+  // Phase 6: macro / crypto indicators. Idempotent — `startScheduler` also
+  // wires these up, so double-calls are no-ops.
+  try {
+    startFearGreed();
+    startDxyVix();
+    startFundingOi();
+    startBtcDominance();
+    startFred();
+  } catch (err) {
+    logger.error({ err }, 'phase-6 collectors failed to start (non-fatal)');
+  }
+
+  // Phase 5: news collectors. Idempotent — `startScheduler` also starts
+  // them, so double-calls are no-ops.
+  try {
+    startRssNews();
+    startCryptoPanic();
+  } catch (err) {
+    logger.error({ err }, 'phase-5 collectors failed to start (non-fatal)');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
@@ -295,6 +329,13 @@ async function main(): Promise<void> {
       stopHelius();
       stopBlockstream();
       stopSnapshotCron();
+      stopFearGreed();
+      stopDxyVix();
+      stopFundingOi();
+      stopBtcDominance();
+      stopFred();
+      stopRssNews();
+      stopCryptoPanic();
       await stopBinanceWs();
       await app.close();
       db.close();

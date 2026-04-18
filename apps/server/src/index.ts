@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import cron from 'node-cron';
 import { config, setMasterKey } from './config.js';
 import { logger } from './util/logger.js';
@@ -102,7 +103,9 @@ interface SeedIgnore {
 function ensureMasterKey(): void {
   if (config.masterKey && config.masterKey.length >= 32) return;
   const generated = crypto.randomBytes(32).toString('hex');
-  const envPath = path.join(process.cwd(), '.env');
+  // Resolve .env relative to this file (apps/server/src|dist/index.*), walk up to repo root
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const envPath = path.resolve(here, '..', '..', '..', '..', '.env');
   try {
     let current = '';
     if (fs.existsSync(envPath)) {

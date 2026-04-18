@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
+import { useLiveModeStore } from '@/lib/store';
 import { OpenOrdersPanel } from '@/components/trading/OpenOrdersPanel';
 import { PositionsPanel } from '@/components/trading/PositionsPanel';
 
@@ -105,6 +106,10 @@ function extractGuardMessage(err: Error): string {
       if (parsed.error === 'daily_loss_cap_reached') return 'BLOCKED: daily loss cap reached';
       if (parsed.error === 'cooldown_active') return 'BLOCKED: order cooldown active';
       if (parsed.error === 'confirmation_required') return 'BLOCKED: confirmation required';
+      if (parsed.error === 'live_daily_order_cap_reached') return 'BLOCKED: daily live order cap reached';
+      if (parsed.error === 'live_global_cooldown_active') return 'BLOCKED: global live cooldown active';
+      if (parsed.error === 'first_per_asset_confirm_required')
+        return 'BLOCKED: first live order per asset requires confirmation';
       return `BLOCKED: ${parsed.error}${parsed.detail ? ` — ${parsed.detail}` : ''}`;
     }
   } catch {
@@ -173,6 +178,15 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
   const [guardError, setGuardError] = useState<string | null>(null);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [bottomTab, setBottomTab] = useState<BottomTab>('orders');
+  const [firstPerAssetChecked, setFirstPerAssetChecked] = useState(false);
+
+  const liveConfirmedAssets = useLiveModeStore((s) => s.liveConfirmedAssets);
+  const confirmAsset = useLiveModeStore((s) => s.confirmAsset);
+
+  const tradingModeQ = useKvString('trading_mode');
+  const isLive = tradingModeQ.data?.value === 'live';
+  const needsFirstPerAsset =
+    isLive && assetId !== null && !liveConfirmedAssets.has(assetId);
 
   const { lastEvent } = useEventStream(['trade_tick'], {
     assetIds: assetId !== null ? [assetId] : undefined,
@@ -252,6 +266,9 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
       };
       if (type === 'LIMIT' && limitPrice !== null) body.limitPrice = limitPrice;
       if (type === 'STOP' && stopPrice !== null) body.stopPrice = stopPrice;
+      if (isLive && needsFirstPerAsset && firstPerAssetChecked) {
+        body.firstPerAssetConfirmed = true;
+      }
       return api.post<OrderResponse>('/api/orders', body);
     },
     onSuccess: (res) => {
@@ -261,6 +278,10 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
       setToast({ kind: 'success', text: `ORDER ${status.toUpperCase()}` });
       setGuardError(null);
       setModalOpen(false);
+      if (isLive && assetId !== null && needsFirstPerAsset && firstPerAssetChecked) {
+        confirmAsset(assetId);
+      }
+      setFirstPerAssetChecked(false);
     },
     onError: (err) => {
       const msg = extractGuardMessage(err);
@@ -294,6 +315,7 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
   const onOpenConfirm = () => {
     if (!canSubmit) return;
     setGuardError(null);
+    setFirstPerAssetChecked(false);
     setConfirmEnabledAt(Date.now() + 2000);
     setNow(Date.now());
     setModalOpen(true);
@@ -420,14 +442,20 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
           onClick={onOpenConfirm}
           className={side === 'buy' ? buyBtn : sellBtn}
         >
-          PLACE PAPER ORDER
+          {isLive ? 'PLACE LIVE ORDER' : 'PLACE PAPER ORDER'}
         </button>
 
-        {/* Paper badge */}
+        {/* Mode badge */}
         <div className="mt-2 flex justify-center">
-          <span className="border-2 border-neon-amber text-neon-amber pixel-font text-[9px] px-2 py-1 uppercase inline-block glow">
-            Paper
-          </span>
+          {isLive ? (
+            <span className="border-2 border-neon-red text-neon-red pixel-font text-[9px] px-2 py-1 uppercase inline-block glow animate-pulse">
+              ● Live
+            </span>
+          ) : (
+            <span className="border-2 border-neon-amber text-neon-amber pixel-font text-[9px] px-2 py-1 uppercase inline-block glow">
+              Paper
+            </span>
+          )}
         </div>
 
         {/* Toast */}
@@ -455,8 +483,12 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
               className="bg-bg-terminal border-2 border-neon-cyan p-6 max-w-md w-full flex flex-col gap-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="pixel-font text-[12px] text-neon-cyan glow uppercase">
-                Confirm Paper Order
+              <h2
+                className={`pixel-font text-[12px] glow uppercase ${
+                  isLive ? 'text-neon-red' : 'text-neon-cyan'
+                }`}
+              >
+                {isLive ? 'Confirm LIVE Order' : 'Confirm Paper Order'}
               </h2>
               <div className="flex flex-col gap-2 vt-font text-base">
                 <div className="flex justify-between">
@@ -510,6 +542,26 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
                 </div>
               </div>
 
+              {isLive && (
+                <div className="border-2 border-neon-red text-neon-red pixel-font text-[10px] px-3 py-2 uppercase glow">
+                  ● LIVE MODE — THIS ORDER WILL HIT THE EXCHANGE
+                </div>
+              )}
+
+              {isLive && needsFirstPerAsset && (
+                <label className="flex items-start gap-2 cursor-pointer border-2 border-neon-amber p-2">
+                  <input
+                    type="checkbox"
+                    checked={firstPerAssetChecked}
+                    onChange={(e) => setFirstPerAssetChecked(e.target.checked)}
+                    className="mt-1"
+                  />
+                  <span className="pixel-font text-[10px] text-neon-amber uppercase leading-4">
+                    I confirm my first live order on {asset?.symbol ?? `#${assetId}`}
+                  </span>
+                </label>
+              )}
+
               {placeOrder.isError && guardError && (
                 <div className="border-2 border-neon-red text-neon-red pixel-font text-[10px] px-3 py-2 uppercase glow">
                   {guardError}
@@ -527,7 +579,11 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
                 </button>
                 <button
                   type="button"
-                  disabled={confirmDisabled || placeOrder.isPending}
+                  disabled={
+                    confirmDisabled ||
+                    placeOrder.isPending ||
+                    (isLive && needsFirstPerAsset && !firstPerAssetChecked)
+                  }
                   onClick={() => placeOrder.mutate()}
                   className={`pixel-font text-[10px] px-4 py-2 border-2 ${
                     side === 'buy'

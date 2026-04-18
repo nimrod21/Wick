@@ -20,6 +20,13 @@ export interface PlaceOrderRequest {
   limitPrice?: number;
   stopPrice?: number;
   confirmed: boolean; // frontend confirmation modal sets this
+  /**
+   * Set by the frontend when the user has confirmed the first live-mode
+   * order for a given asset in the current session. The server tracks
+   * per-asset confirmation in memory (resets on restart) and will reject
+   * the first order for an unconfirmed asset unless this flag is true.
+   */
+  firstPerAssetConfirmed?: boolean;
 }
 
 export interface Order {

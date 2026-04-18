@@ -132,44 +132,318 @@ function NumberRow({ kvKey, label, description, placeholder, integer, allowNegat
   );
 }
 
-function TradingModeRow() {
-  const q = useKv('trading_mode');
-  const m = usePutKv('trading_mode');
-  const mode = q.data?.value === 'live' ? 'live' : 'paper';
+// ── Live-mode DANGER ZONE ─────────────────────────────────────────────
 
-  // Live is Phase 10 — disable toggle for now.
-  const liveDisabled = true;
+interface PermissionsCheck {
+  ok: boolean;
+  enableSpotAndMarginTrading: boolean;
+  enableWithdrawals: boolean;
+  ipRestrict: boolean;
+  detail?: Record<string, unknown> & { error?: string };
+}
+
+function LiveModeDangerZone() {
+  const qc = useQueryClient();
+  const modeQ = useKv('trading_mode');
+  const mode = modeQ.data?.value === 'live' ? 'live' : 'paper';
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [permsResult, setPermsResult] = useState<PermissionsCheck | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [countdownStartedAt, setCountdownStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [activateError, setActivateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen) {
+      setPermsResult(null);
+      setConfirmText('');
+      setCountdownStartedAt(null);
+      setActivateError(null);
+    }
+  }, [modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const id = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(id);
+  }, [modalOpen]);
+
+  const verifyMutation = useMutation<PermissionsCheck, Error, void>({
+    mutationFn: () => api.post<PermissionsCheck>('/api/live-mode/verify-permissions', {}),
+    onSuccess: (res) => setPermsResult(res),
+    onError: (err) =>
+      setPermsResult({
+        ok: false,
+        enableSpotAndMarginTrading: false,
+        enableWithdrawals: false,
+        ipRestrict: false,
+        detail: { error: err.message },
+      }),
+  });
+
+  const activateMutation = useMutation<
+    { ok?: boolean; tradingMode?: string; error?: string; detail?: string } & PermissionsCheck,
+    Error,
+    void
+  >({
+    mutationFn: () =>
+      api.post('/api/live-mode/activate', { confirmationText: confirmText }),
+    onSuccess: () => {
+      setModalOpen(false);
+      void qc.invalidateQueries({ queryKey: ['runtime', 'kv', 'trading_mode'] });
+    },
+    onError: (err) => setActivateError(err.message),
+  });
+
+  const deactivateMutation = useMutation<
+    { ok?: boolean; tradingMode?: string },
+    Error,
+    void
+  >({
+    mutationFn: () => api.post('/api/live-mode/deactivate', {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['runtime', 'kv', 'trading_mode'] });
+    },
+  });
+
+  const countdownMs = 5000;
+  const elapsed = countdownStartedAt !== null ? now - countdownStartedAt : 0;
+  const remainingS = Math.max(0, Math.ceil((countdownMs - elapsed) / 1000));
+  const countdownActive = countdownStartedAt !== null && elapsed < countdownMs;
+
+  const confirmOk = confirmText === 'ACTIVATE LIVE';
+  const canSubmit =
+    confirmOk &&
+    permsResult?.ok === true &&
+    !countdownActive &&
+    countdownStartedAt !== null;
+
+  const startCountdown = () => {
+    if (!confirmOk || permsResult?.ok !== true) return;
+    setCountdownStartedAt(Date.now());
+    setNow(Date.now());
+  };
 
   return (
-    <div className="flex items-center gap-3 border border-border-dim bg-bg-terminal p-3">
-      <div className="flex flex-col flex-1">
-        <span className="pixel-font text-[10px] text-neon-cyan uppercase">Trading Mode</span>
-        <span className="text-text-dim text-xs">Paper uses the paper broker. Live is Phase 10.</span>
+    <div className="flex flex-col gap-3 border-4 border-neon-amber bg-bg-terminal p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="pixel-font text-[13px] text-neon-amber uppercase glow">
+          LIVE TRADING — DANGER ZONE
+        </h3>
+        {mode === 'live' ? (
+          <span className="pixel-font text-[10px] px-3 py-1 border-2 bg-neon-red text-bg-void border-neon-red uppercase animate-pulse glow">
+            ● LIVE
+          </span>
+        ) : (
+          <span className="pixel-font text-[10px] px-3 py-1 border-2 border-neon-green text-neon-green uppercase">
+            PAPER
+          </span>
+        )}
       </div>
-      <div className="flex gap-1">
-        <button
-          type="button"
-          onClick={() => m.mutate('paper')}
-          disabled={m.isPending}
-          className={
-            mode === 'paper'
-              ? 'pixel-font text-[10px] px-3 py-1 border-2 bg-neon-amber text-bg-void border-neon-amber'
-              : 'pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim hover:border-neon-cyan hover:text-neon-cyan disabled:opacity-40'
-          }
-        >
-          PAPER
-        </button>
-        <button
-          type="button"
-          disabled={liveDisabled}
-          title={liveDisabled ? 'Live trading arrives in Phase 10' : ''}
-          className={
-            'pixel-font text-[10px] px-3 py-1 border-2 text-text-dim border-border-dim opacity-50 cursor-not-allowed'
-          }
-        >
-          LIVE
-        </button>
+
+      <p className="text-text-secondary text-xs">
+        Live mode submits real orders to Binance using your stored API key.
+        Paper mode is the safe default. You must pass the permissions check
+        and type the confirmation phrase to switch into live mode.
+      </p>
+
+      <div className="flex gap-2">
+        {mode === 'paper' ? (
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="pixel-font text-[11px] px-4 py-3 border-4 border-neon-red text-neon-red uppercase glow hover:bg-neon-red hover:text-bg-void"
+          >
+            ENABLE LIVE
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => deactivateMutation.mutate()}
+            disabled={deactivateMutation.isPending}
+            className="pixel-font text-[11px] px-4 py-3 border-4 border-neon-green text-neon-green uppercase glow hover:bg-neon-green hover:text-bg-void disabled:opacity-50"
+          >
+            {deactivateMutation.isPending ? '…' : 'DISABLE LIVE'}
+          </button>
+        )}
       </div>
+
+      {mode === 'live' && (
+        <div className="flex flex-col gap-2">
+          <NumberRow
+            kvKey="live_max_orders_per_day"
+            label="Live: Max Orders / Day"
+            description="Hard daily cap on ccxt live orders. Default 20."
+            placeholder="20"
+            integer
+          />
+          <NumberRow
+            kvKey="live_order_global_cooldown_seconds"
+            label="Live: Global Cooldown (s)"
+            description="Min seconds between any two live orders. Default 30."
+            placeholder="30"
+            integer
+          />
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 bg-bg-void/80 flex items-center justify-center z-50"
+          onClick={() => {
+            if (!activateMutation.isPending) setModalOpen(false);
+          }}
+        >
+          <div
+            className="bg-bg-terminal border-4 border-neon-red p-6 max-w-lg w-full flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="pixel-font text-[14px] text-neon-red glow uppercase">
+              ACTIVATE LIVE TRADING
+            </h2>
+
+            <div className="border-2 border-neon-amber text-neon-amber p-3 pixel-font text-[10px] leading-5 uppercase">
+              WARNING: Live mode places real orders with your Binance key and
+              can move real money. There is no undo. Only proceed if you
+              understand the risk and have set appropriate risk limits.
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="pixel-font text-[10px] text-neon-cyan uppercase">
+                  1. Key Permissions Check
+                </span>
+                <button
+                  type="button"
+                  onClick={() => verifyMutation.mutate()}
+                  disabled={verifyMutation.isPending}
+                  className="pixel-font text-[10px] px-3 py-1 border-2 border-neon-cyan text-neon-cyan disabled:opacity-50"
+                >
+                  {verifyMutation.isPending ? 'CHECKING…' : 'CHECK PERMISSIONS'}
+                </button>
+              </div>
+              {permsResult && (
+                <div className="flex flex-col gap-1 border border-border-dim bg-bg-void p-3 pixel-font text-[10px]">
+                  <CheckLine
+                    ok={permsResult.enableSpotAndMarginTrading}
+                    label="Spot trading enabled"
+                  />
+                  <CheckLine
+                    ok={!permsResult.enableWithdrawals}
+                    label="Withdrawals disabled"
+                    required
+                  />
+                  <CheckLine
+                    ok={permsResult.ipRestrict}
+                    label="IP whitelisted (informational)"
+                    informational
+                  />
+                  {permsResult.detail?.error && (
+                    <div className="text-neon-red text-[9px] uppercase mt-1">
+                      {String(permsResult.detail.error)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="pixel-font text-[10px] text-neon-cyan uppercase">
+                2. Type &quot;ACTIVATE LIVE&quot; exactly
+              </span>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="ACTIVATE LIVE"
+                className="bg-bg-void border border-border-dim px-3 py-2 vt-font text-base tracking-widest"
+                autoCapitalize="characters"
+              />
+              <div className="pixel-font text-[9px] uppercase">
+                {confirmOk ? (
+                  <span className="text-neon-green">✓ CONFIRMATION MATCHES</span>
+                ) : (
+                  <span className="text-text-dim">Waiting for exact match…</span>
+                )}
+              </div>
+            </div>
+
+            {activateError && (
+              <div className="border-2 border-neon-red text-neon-red pixel-font text-[10px] px-3 py-2 uppercase">
+                {activateError}
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button
+                type="button"
+                className="pixel-font text-[10px] px-4 py-2 border-2 border-border-dim text-text-secondary hover:border-neon-cyan hover:text-neon-cyan"
+                disabled={activateMutation.isPending}
+                onClick={() => setModalOpen(false)}
+              >
+                CANCEL
+              </button>
+              {countdownStartedAt === null ? (
+                <button
+                  type="button"
+                  disabled={!confirmOk || permsResult?.ok !== true}
+                  onClick={startCountdown}
+                  className="pixel-font text-[10px] px-4 py-2 border-2 bg-neon-red text-bg-void border-neon-red disabled:opacity-40 disabled:cursor-not-allowed uppercase"
+                >
+                  START 5s COUNTDOWN
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!canSubmit || activateMutation.isPending}
+                  onClick={() => activateMutation.mutate()}
+                  className="pixel-font text-[10px] px-4 py-2 border-2 bg-neon-red text-bg-void border-neon-red disabled:opacity-40 disabled:cursor-not-allowed uppercase"
+                >
+                  {activateMutation.isPending
+                    ? 'ACTIVATING…'
+                    : countdownActive
+                      ? `ACTIVATE (${remainingS}s)`
+                      : 'ACTIVATE NOW'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckLine({
+  ok,
+  label,
+  required,
+  informational,
+}: {
+  ok: boolean;
+  label: string;
+  required?: boolean;
+  informational?: boolean;
+}) {
+  if (informational) {
+    return (
+      <div
+        className={
+          ok ? 'text-neon-green' : 'text-text-dim'
+        }
+      >
+        {ok ? '☑' : '○'} {label}
+      </div>
+    );
+  }
+  if (ok) {
+    return <div className="text-neon-green">☑ {label}</div>;
+  }
+  return (
+    <div className="text-neon-red">
+      ✗ {label}
+      {required ? ' (REQUIRED)' : ''}
     </div>
   );
 }
@@ -205,7 +479,7 @@ export function ExecutionKnobs() {
         placeholder="10"
         integer
       />
-      <TradingModeRow />
+      <LiveModeDangerZone />
     </div>
   );
 }

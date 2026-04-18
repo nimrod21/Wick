@@ -21,6 +21,8 @@ const WHITELIST = [
   'daily_loss_cap',
   'order_cooldown_seconds',
   'trading_mode',
+  'live_max_orders_per_day',
+  'live_order_global_cooldown_seconds',
 ] as const;
 type AllowedKey = (typeof WHITELIST)[number];
 

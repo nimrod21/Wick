@@ -1,10 +1,56 @@
-export default function Page() {
+'use client';
+
+import { useTradingStore } from '@/lib/store';
+import { LightweightChart } from '@/components/chart/LightweightChart';
+import { TimeframeSwitcher } from '@/components/chart/TimeframeSwitcher';
+import { AssetList } from '@/components/trading/AssetList';
+import { Orderbook } from '@/components/trading/Orderbook';
+import { RecentTrades } from '@/components/trading/RecentTrades';
+import { MarketStats } from '@/components/trading/MarketStats';
+import { OrderEntry } from '@/components/trading/OrderEntry';
+
+const TRADING_TYPE = 'crypto' as const;
+
+export default function CryptoTradingPage() {
+  const activeAsset = useTradingStore((s) => s.activeAsset[TRADING_TYPE]);
+  const timeframe = useTradingStore((s) => s.timeframe[TRADING_TYPE]);
+
   return (
-    <div>
-      <h1 className="pixel-font text-neon-cyan glow text-xs">TRADING — CRYPTO</h1>
-      <p className="vt-font text-text-secondary text-lg mt-4">
-        Chart / orderbook / order-entry land in Phase 2 or Phase 3.
-      </p>
+    <div className="flex flex-col gap-3 h-[calc(100vh-8rem)]">
+      <MarketStats assetId={activeAsset} />
+
+      <div className="grid grid-cols-[220px_1fr_280px] gap-3 flex-1 min-h-0">
+        <AssetList tradingType={TRADING_TYPE} assetTypes={['crypto']} />
+
+        <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border-dim">
+            <h2 className="pixel-font text-[10px] text-neon-cyan">
+              {activeAsset ? `ASSET #${activeAsset}` : 'SELECT AN ASSET'}
+            </h2>
+            <TimeframeSwitcher tradingType={TRADING_TYPE} />
+          </div>
+          <div className="flex-1 min-h-0 p-2">
+            {activeAsset ? (
+              <LightweightChart assetId={activeAsset} timeframe={timeframe} height={480} />
+            ) : (
+              <div className="h-full flex items-center justify-center text-text-dim vt-font text-lg">
+                Pick a pair from the list.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 min-h-0">
+          <div className="flex-1 min-h-0">
+            <Orderbook assetId={activeAsset} />
+          </div>
+          <div className="flex-1 min-h-0">
+            <RecentTrades assetId={activeAsset} />
+          </div>
+        </div>
+      </div>
+
+      <OrderEntry assetId={activeAsset} />
     </div>
   );
 }

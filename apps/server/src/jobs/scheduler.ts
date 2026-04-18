@@ -18,6 +18,19 @@ import { twelveDataTick } from '../collectors/stocks/twelvedata.js';
 import { finnhubNewsTick } from '../collectors/stocks/finnhub.js';
 import { yahooTick } from '../collectors/stocks/yahoo.js';
 import { aggregateAll } from '../collectors/crypto/binance-rest.js';
+import { startFearGreed, stopFearGreed } from '../collectors/macro/fear-greed.js';
+import { startDxyVix, stopDxyVix } from '../collectors/macro/dxy-vix.js';
+import { startFundingOi, stopFundingOi } from '../collectors/macro/funding-oi.js';
+import {
+  startBtcDominance,
+  stopBtcDominance,
+} from '../collectors/macro/btc-dominance.js';
+import { startFred, stopFred } from '../collectors/macro/fred.js';
+import { startRssNews, stopRssNews } from '../collectors/news/rss.js';
+import {
+  startCryptoPanic,
+  stopCryptoPanic,
+} from '../collectors/news/cryptopanic.js';
 
 const tasks: ScheduledTask[] = [];
 let running = false;
@@ -65,6 +78,27 @@ export function startScheduler(): void {
     }),
   );
 
+  // Phase-6 macro/indicator collectors. Each is self-driving (own cron inside),
+  // but we start/stop them through the scheduler so lifecycle stays unified.
+  try {
+    startFearGreed();
+    startDxyVix();
+    startFundingOi();
+    startBtcDominance();
+    startFred();
+  } catch (err) {
+    logger.error({ err }, 'scheduler: macro collectors failed to start');
+  }
+
+  // Phase-5 news collectors. Self-driving (own cron inside); lifecycle
+  // hitched to the scheduler so start/stop is unified with other feeds.
+  try {
+    startRssNews();
+    startCryptoPanic();
+  } catch (err) {
+    logger.error({ err }, 'scheduler: news collectors failed to start');
+  }
+
   logger.info(
     { taskCount: tasks.length },
     'phase-3 scheduler started',
@@ -82,6 +116,21 @@ export function stopScheduler(): void {
     }
   }
   tasks.length = 0;
+  try {
+    stopFearGreed();
+    stopDxyVix();
+    stopFundingOi();
+    stopBtcDominance();
+    stopFred();
+  } catch (err) {
+    logger.error({ err }, 'scheduler: macro stop failed');
+  }
+  try {
+    stopRssNews();
+    stopCryptoPanic();
+  } catch (err) {
+    logger.error({ err }, 'scheduler: news stop failed');
+  }
 }
 
 export function isSchedulerRunning(): boolean {

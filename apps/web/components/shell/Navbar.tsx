@@ -9,7 +9,7 @@ import { LocalClock } from './LocalClock';
 
 const TABS: ReadonlyArray<{ label: string; href: string }> = [
   { label: 'Dashboard', href: '/' },
-  { label: 'Trading', href: '/trading/crypto' },
+  { label: 'Trading', href: '/trading' },
   { label: 'Whales', href: '/whales' },
   { label: 'News', href: '/news' },
   { label: 'Indicators', href: '/indicators' },
@@ -43,10 +43,6 @@ function LiveModeIndicator() {
 function isActive(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === '/') return pathname === '/';
-  // /trading/crypto also highlights the "Trading" tab
-  if (href.startsWith('/trading/')) {
-    return pathname.startsWith('/trading/');
-  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

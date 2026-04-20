@@ -5,12 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
 import { useLiveModeStore } from '@/lib/store';
-import { OpenOrdersPanel } from '@/components/trading/OpenOrdersPanel';
-import { PositionsPanel } from '@/components/trading/PositionsPanel';
 
 type OrderType = 'MARKET' | 'LIMIT' | 'STOP';
 type OrderSide = 'buy' | 'sell';
-type BottomTab = 'orders' | 'positions';
 
 interface OrderEntryProps {
   assetId: number | null;
@@ -177,7 +174,6 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
   const [toast, setToast] = useState<Toast | null>(null);
   const [guardError, setGuardError] = useState<string | null>(null);
   const [livePrice, setLivePrice] = useState<number | null>(null);
-  const [bottomTab, setBottomTab] = useState<BottomTab>('orders');
   const [firstPerAssetChecked, setFirstPerAssetChecked] = useState(false);
 
   const liveConfirmedAssets = useLiveModeStore((s) => s.liveConfirmedAssets);
@@ -291,50 +287,7 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
   });
 
   if (assetId === null) {
-    return (
-      <div className="flex flex-col gap-3">
-        <AccountBalanceHeader />
-        <div className="flex flex-col gap-2 p-4 border border-border-dim bg-bg-terminal opacity-50 pointer-events-none">
-          <div className="flex gap-1 mb-2">
-            <span className="pixel-font text-[10px] px-3 py-1 border-2 bg-neon-cyan text-bg-void border-neon-cyan">
-              MARKET
-            </span>
-            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
-              LIMIT
-            </span>
-            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
-              STOP
-            </span>
-          </div>
-          <div className="flex gap-1">
-            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
-              BUY
-            </span>
-            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
-              SELL
-            </span>
-          </div>
-          <div className="flex flex-col gap-1 mt-2">
-            <span className="pixel-font text-[8px] text-text-secondary uppercase">Qty</span>
-            <div className="bg-bg-void border border-border-dim px-2 py-1 vt-font text-lg text-text-dim">
-              0.0000
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-2">
-            <span className="pixel-font text-[8px] text-text-secondary uppercase">Notional</span>
-            <span className="vt-font text-lg text-text-dim">—</span>
-          </div>
-          <button
-            type="button"
-            disabled
-            className="bg-neon-green text-bg-void pixel-font text-[11px] py-3 opacity-40 cursor-not-allowed"
-          >
-            PLACE PAPER ORDER
-          </button>
-        </div>
-        <BottomTabs bottomTab={bottomTab} setBottomTab={setBottomTab} />
-      </div>
-    );
+    return null;
   }
 
   const canSubmit =
@@ -637,39 +590,6 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
           </div>
         )}
       </div>
-
-      <BottomTabs bottomTab={bottomTab} setBottomTab={setBottomTab} />
-    </div>
-  );
-}
-
-function BottomTabs({
-  bottomTab,
-  setBottomTab,
-}: {
-  bottomTab: BottomTab;
-  setBottomTab: (t: BottomTab) => void;
-}) {
-  const tabCls = (active: boolean) =>
-    active
-      ? 'pixel-font text-[10px] px-3 py-1 border-2 bg-neon-cyan text-bg-void border-neon-cyan'
-      : 'pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim hover:border-neon-cyan hover:text-neon-cyan';
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex gap-1">
-        <button type="button" className={tabCls(bottomTab === 'orders')} onClick={() => setBottomTab('orders')}>
-          OPEN ORDERS
-        </button>
-        <button
-          type="button"
-          className={tabCls(bottomTab === 'positions')}
-          onClick={() => setBottomTab('positions')}
-        >
-          POSITIONS
-        </button>
-      </div>
-      {bottomTab === 'orders' ? <OpenOrdersPanel /> : <PositionsPanel />}
     </div>
   );
 }

@@ -4,15 +4,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
-import { useTradingStore, type TradingType } from '@/lib/store';
+import { useTradingStore, type AssetType } from '@/lib/store';
 
-type AssetKind = 'crypto' | 'stock' | 'commodity' | 'etf';
+type ServerAssetKind = 'crypto' | 'stock' | 'etf' | 'forex' | 'commodity' | 'index';
 
 interface Asset {
   id: number;
   symbol: string;
   displayName: string;
-  type: AssetKind;
+  type: ServerAssetKind;
   enabled: boolean;
   tradeableVia?: string;
   tradeableSymbol?: string;
@@ -35,17 +35,6 @@ interface CandlesResponse {
   candles: Candle[];
 }
 
-interface AssetListProps {
-  tradingType: TradingType;
-  assetTypes: AssetKind[];
-  /**
-   * Optional post-fetch filter. If provided, only assets whose symbol
-   * satisfies the predicate are rendered. Used by metals/commodities tabs
-   * to narrow down the `commodity` asset type to a specific pair (e.g. XAU/USD).
-   */
-  symbolFilter?: (symbol: string) => boolean;
-}
-
 interface TradeTickStreamEvent {
   kind: 'trade_tick';
   assetId: number;
@@ -62,6 +51,28 @@ function isTradeTick(ev: unknown): ev is TradeTickStreamEvent {
   );
 }
 
+// Maps server-side asset kind to our 4 top-level frontend categories.
+// Commodity symbols XAU/XAG are "metals", everything else commodity is "commodities".
+// Stocks and ETFs are grouped under "stocks". Crypto → crypto.
+// forex/index are hidden from the workspace list (return null).
+function toAssetType(a: Asset): AssetType | null {
+  if (a.type === 'crypto') return 'crypto';
+  if (a.type === 'stock' || a.type === 'etf') return 'stocks';
+  if (a.type === 'commodity') {
+    const s = a.symbol.toUpperCase();
+    if (s.startsWith('XAU') || s.startsWith('XAG')) return 'metals';
+    return 'commodities';
+  }
+  return null;
+}
+
+const TYPE_BADGE: Record<AssetType, string> = {
+  crypto: 'C',
+  stocks: 'S',
+  metals: 'M',
+  commodities: 'O',
+};
+
 function pickDecimals(n: number): number {
   const abs = Math.abs(n);
   if (abs >= 1000) return 2;
@@ -74,8 +85,15 @@ function formatPrice(n: number | undefined): string {
   return n.toFixed(pickDecimals(n));
 }
 
+interface NormalizedAsset {
+  id: number;
+  symbol: string;
+  displayName: string;
+  type: AssetType;
+}
+
 interface AssetRowProps {
-  asset: Asset;
+  asset: NormalizedAsset;
   livePrice: number | undefined;
   active: boolean;
   onSelect: () => void;
@@ -111,17 +129,22 @@ function AssetRow({ asset, livePrice, active, onSelect }: AssetRowProps) {
   const priceStr = formatPrice(livePrice);
 
   const rowCls = active
-    ? 'px-2 py-1 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated flex items-center justify-between gap-2'
-    : 'px-2 py-1 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated flex items-center justify-between gap-2';
+    ? 'px-2 py-1 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated flex items-center justify-between gap-2 w-full text-left'
+    : 'px-2 py-1 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated flex items-center justify-between gap-2 w-full text-left';
 
   return (
     <button type="button" onClick={onSelect} className={rowCls}>
-      <span className="flex flex-col items-start min-w-0">
-        <span className="pixel-font text-[10px] text-text-primary truncate">
-          {asset.symbol}
+      <span className="flex items-center gap-2 min-w-0">
+        <span className="pixel-font text-[9px] text-text-dim border border-border-dim px-1 leading-none py-[2px]">
+          {TYPE_BADGE[asset.type]}
         </span>
-        <span className="vt-font text-[14px] text-text-secondary truncate">
-          {asset.displayName}
+        <span className="flex flex-col items-start min-w-0">
+          <span className="pixel-font text-[10px] text-text-primary truncate">
+            {asset.symbol}
+          </span>
+          <span className="vt-font text-[14px] text-text-secondary truncate">
+            {asset.displayName}
+          </span>
         </span>
       </span>
       <span className="flex flex-col items-end min-w-0">
@@ -132,45 +155,53 @@ function AssetRow({ asset, livePrice, active, onSelect }: AssetRowProps) {
   );
 }
 
-export function AssetList({
-  tradingType,
-  assetTypes,
-  symbolFilter,
-}: AssetListProps) {
-  const [query, setQuery] = useState('');
-  const activeId = useTradingStore((s) => s.activeAsset[tradingType]);
+const TYPE_PILLS: ReadonlyArray<{ value: AssetType | 'all'; label: string }> = [
+  { value: 'all',         label: 'ALL' },
+  { value: 'crypto',      label: 'CRYPTO' },
+  { value: 'stocks',      label: 'STOCKS' },
+  { value: 'metals',      label: 'METALS' },
+  { value: 'commodities', label: 'COMMOD' },
+];
+
+export function AssetList() {
+  const typeFilter = useTradingStore((s) => s.typeFilter);
+  const setTypeFilter = useTradingStore((s) => s.setTypeFilter);
+  const search = useTradingStore((s) => s.search);
+  const setSearch = useTradingStore((s) => s.setSearch);
+  const selectedAsset = useTradingStore((s) => s.selectedAsset);
   const setSelectedAsset = useTradingStore((s) => s.setSelectedAsset);
 
-  const assetsKey = useMemo(() => ['assets-list', ...assetTypes], [assetTypes]);
-
-  const { data: assetsData } = useQuery({
-    queryKey: assetsKey,
-    queryFn: async () => {
-      const results = await Promise.all(
-        assetTypes.map((t) => api.get<AssetsResponse>(`/api/assets?type=${encodeURIComponent(t)}`)),
-      );
-      const merged: Asset[] = [];
-      for (const r of results) {
-        if (r && Array.isArray(r.assets)) merged.push(...r.assets);
-      }
-      return merged;
-    },
-    staleTime: 60_000,
+  const { data: assetsData } = useQuery<AssetsResponse>({
+    queryKey: ['assets-all'],
+    queryFn: () => api.get<AssetsResponse>('/api/assets'),
+    staleTime: 300_000,
   });
 
-  const assets = useMemo<Asset[]>(() => {
-    let list = (assetsData ?? []).filter((a) => a.enabled !== false);
-    if (symbolFilter) list = list.filter((a) => symbolFilter(a.symbol));
-    const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (a) =>
-        a.symbol.toLowerCase().includes(q) ||
-        a.displayName.toLowerCase().includes(q),
-    );
-  }, [assetsData, query, symbolFilter]);
+  const normalized = useMemo<NormalizedAsset[]>(() => {
+    const raw = assetsData?.assets ?? [];
+    const out: NormalizedAsset[] = [];
+    for (const a of raw) {
+      if (a.enabled === false) continue;
+      const t = toAssetType(a);
+      if (!t) continue;
+      out.push({ id: a.id, symbol: a.symbol, displayName: a.displayName, type: t });
+    }
+    return out;
+  }, [assetsData]);
 
-  const assetIds = useMemo(() => assets.map((a) => a.id), [assets]);
+  const filtered = useMemo<NormalizedAsset[]>(() => {
+    const s = search.trim().toLowerCase();
+    return normalized.filter((a) => {
+      if (typeFilter !== 'all' && a.type !== typeFilter) return false;
+      if (!s) return true;
+      return (
+        a.symbol.toLowerCase().includes(s) ||
+        a.displayName.toLowerCase().includes(s)
+      );
+    });
+  }, [normalized, typeFilter, search]);
+
+  const assetIds = useMemo(() => filtered.map((a) => a.id), [filtered]);
 
   const { lastEvent } = useEventStream(['trade_tick'], { assetIds });
 
@@ -182,37 +213,58 @@ export function AssetList({
     setLastPrices((prev) => ({ ...prev, [assetId]: price }));
   }, [lastEvent]);
 
-  return (
-    <div className="flex flex-col gap-1 p-2 border border-border-dim bg-bg-terminal overflow-y-auto max-h-full min-h-[400px]">
-      <input
-        type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="SEARCH…"
-        className="bg-bg-void border border-border-dim px-2 py-1 text-text-primary text-sm mb-2"
-      />
+  const pillCls = (active: boolean) =>
+    active
+      ? 'pixel-font text-[9px] px-3 py-1 border-2 border-neon-cyan text-neon-cyan glow'
+      : 'pixel-font text-[9px] px-3 py-1 border-2 border-border-dim text-text-dim hover:border-neon-cyan hover:text-neon-cyan';
 
-      {assets.length === 0 ? (
-        <div className="vt-font text-text-dim text-sm px-2 py-1">
-          {assetsData ? 'NO MATCHES' : 'LOADING…'}
-        </div>
-      ) : (
-        assets.map((a) => (
-          <AssetRow
-            key={a.id}
-            asset={a}
-            livePrice={lastPrices[a.id]}
-            active={a.id === activeId}
-            onSelect={() =>
-              setSelectedAsset(tradingType, {
-                id: a.id,
-                symbol: a.symbol,
-                displayName: a.displayName,
-              })
-            }
-          />
-        ))
-      )}
+  return (
+    <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0 h-full">
+      <div className="flex flex-wrap gap-1 p-2 border-b border-border-dim shrink-0">
+        {TYPE_PILLS.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            onClick={() => setTypeFilter(p.value)}
+            className={pillCls(typeFilter === p.value)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="p-2 border-b border-border-dim shrink-0">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className="w-full px-3 py-1 bg-bg-void border border-border-dim text-text-primary vt-font text-sm focus:outline-none focus:border-neon-cyan"
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto flex flex-col gap-1 p-2">
+        {filtered.length === 0 ? (
+          <div className="vt-font text-text-dim text-sm px-2 py-1">
+            {assetsData ? 'NO MATCHES' : 'LOADING…'}
+          </div>
+        ) : (
+          filtered.map((a) => (
+            <AssetRow
+              key={a.id}
+              asset={a}
+              livePrice={lastPrices[a.id]}
+              active={selectedAsset?.id === a.id}
+              onSelect={() =>
+                setSelectedAsset({
+                  id: a.id,
+                  symbol: a.symbol,
+                  displayName: a.displayName,
+                  type: a.type,
+                })
+              }
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }

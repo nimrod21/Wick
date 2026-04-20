@@ -122,7 +122,7 @@ export function MarketStats({ assetId }: MarketStatsProps) {
   }, [data]);
 
   if (assetId === null) {
-    return null;
+    return <div className="h-[62px] border border-border-dim bg-bg-terminal/40" />;
   }
 
   const currentPrice = livePrice ?? stats.lastClose;
@@ -140,7 +140,7 @@ export function MarketStats({ assetId }: MarketStatsProps) {
         : 'text-neon-red';
 
   return (
-    <div className="flex gap-8 items-center px-4 py-2 border border-border-dim bg-bg-terminal">
+    <div className="flex gap-8 items-center px-4 py-2 border border-border-dim bg-bg-terminal h-[62px]">
       <div className="flex flex-col">
         <span className="pixel-font text-[8px] text-text-secondary uppercase">Price</span>
         <span className={`vt-font text-lg glow ${directionColor}`}>

@@ -1,15 +1,11 @@
 'use client';
 
-import { useTradingStore, type TradingType, type Timeframe } from '@/lib/store';
-
-interface Props {
-  tradingType: TradingType;
-}
+import { useTradingStore, type Timeframe } from '@/lib/store';
 
 const TIMEFRAMES: readonly Timeframe[] = ['1m', '3m', '15m', '1h', '4h', '1d', '1w'] as const;
 
-export function TimeframeSwitcher({ tradingType }: Props) {
-  const tf = useTradingStore((s) => s.timeframe[tradingType]);
+export function TimeframeSwitcher() {
+  const tf = useTradingStore((s) => s.timeframe);
   const setTf = useTradingStore((s) => s.setTimeframe);
 
   return (
@@ -25,7 +21,7 @@ export function TimeframeSwitcher({ tradingType }: Props) {
             type="button"
             role="tab"
             aria-selected={active}
-            onClick={() => setTf(tradingType, t)}
+            onClick={() => setTf(t)}
             className={cls}
           >
             {t}

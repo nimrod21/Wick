@@ -87,7 +87,7 @@ function Cell({ asset }: { asset: Asset }) {
   return (
     <button
       type="button"
-      onClick={() => router.push('/trading/crypto')}
+      onClick={() => router.push('/trading')}
       className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-cyan p-2 transition-colors"
     >
       <div className="flex items-baseline justify-between">

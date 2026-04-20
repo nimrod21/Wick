@@ -31,47 +31,35 @@ export const useLiveModeStore = create<LiveModeState>((set, get) => ({
   isConfirmed: (assetId) => get().liveConfirmedAssets.has(assetId),
 }));
 
-// ---------- Trading sub-tabs + timeframes ----------
-export type TradingType = 'crypto' | 'metals' | 'commodities' | 'stocks';
+// ---------- Unified trading workspace state ----------
+export type AssetType = 'crypto' | 'stocks' | 'metals' | 'commodities';
 export type Timeframe = '1m' | '3m' | '15m' | '1h' | '4h' | '1d' | '1w';
 
-export type SelectedAsset = { id: number; symbol: string; displayName: string };
+export type SelectedAsset = {
+  id: number;
+  symbol: string;
+  displayName: string;
+  type: AssetType;
+};
 
 interface TradingState {
-  activeAsset: Record<TradingType, number | null>;
-  setActiveAsset: (t: TradingType, id: number | null) => void;
-  selectedAsset: Record<TradingType, SelectedAsset | null>;
-  setSelectedAsset: (t: TradingType, asset: SelectedAsset | null) => void;
-  timeframe: Record<TradingType, Timeframe>;
-  setTimeframe: (t: TradingType, tf: Timeframe) => void;
+  selectedAsset: SelectedAsset | null;
+  setSelectedAsset: (asset: SelectedAsset | null) => void;
+  timeframe: Timeframe;
+  setTimeframe: (tf: Timeframe) => void;
+  typeFilter: AssetType | 'all';
+  setTypeFilter: (t: AssetType | 'all') => void;
+  search: string;
+  setSearch: (s: string) => void;
 }
 
 export const useTradingStore = create<TradingState>((set) => ({
-  activeAsset: {
-    crypto: null,
-    metals: null,
-    commodities: null,
-    stocks: null,
-  },
-  setActiveAsset: (t, id) =>
-    set((s) => ({ activeAsset: { ...s.activeAsset, [t]: id } })),
-  selectedAsset: {
-    crypto: null,
-    metals: null,
-    commodities: null,
-    stocks: null,
-  },
-  setSelectedAsset: (t, asset) =>
-    set((s) => ({
-      selectedAsset: { ...s.selectedAsset, [t]: asset },
-      activeAsset: { ...s.activeAsset, [t]: asset ? asset.id : null },
-    })),
-  timeframe: {
-    crypto: '1h',
-    metals: '1h',
-    commodities: '1h',
-    stocks: '1h',
-  },
-  setTimeframe: (t, tf) =>
-    set((s) => ({ timeframe: { ...s.timeframe, [t]: tf } })),
+  selectedAsset: null,
+  setSelectedAsset: (asset) => set({ selectedAsset: asset }),
+  timeframe: '1h',
+  setTimeframe: (tf) => set({ timeframe: tf }),
+  typeFilter: 'all',
+  setTypeFilter: (t) => set({ typeFilter: t }),
+  search: '',
+  setSearch: (s) => set({ search: s }),
 }));

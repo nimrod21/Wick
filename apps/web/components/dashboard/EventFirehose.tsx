@@ -8,6 +8,7 @@ type AnyEvent = {
   kind: string;
   ts?: number;
   source?: string;
+  assetId?: number;
   [k: string]: unknown;
 };
 
@@ -15,7 +16,29 @@ type Filter = 'ALL' | 'WHALES' | 'NEWS' | 'IND' | 'PROB' | 'ALERT';
 
 const MAX_ROWS = 200;
 
-const TOPICS = ['whale_tx', 'news', 'indicator', 'probability', 'alert'];
+// Velocity-only default set. News moved to the HeadlineNews Digest widget;
+// it's still reachable via the NEWS chip (or ALL) without changes here.
+const DEFAULT_KINDS = new Set([
+  'trade_tick',
+  'probability',
+  'alert',
+  'order_status',
+  'whale_tx',
+]);
+
+// Kinds we subscribe to so the user can switch chips without reconnecting.
+const TOPICS = [
+  'trade_tick',
+  'whale_tx',
+  'news',
+  'indicator',
+  'probability',
+  'alert',
+  'order_status',
+];
+
+// Throttle trade_ticks: at most one tick per asset per this many ms.
+const TRADE_TICK_MIN_INTERVAL_MS = 1000;
 
 const KIND_COLOR: Record<string, string> = {
   whale_tx: 'text-neon-magenta',
@@ -23,6 +46,8 @@ const KIND_COLOR: Record<string, string> = {
   indicator: 'text-neon-amber',
   probability: 'text-neon-purple',
   alert: 'text-neon-red',
+  trade_tick: 'text-neon-green',
+  order_status: 'text-neon-cyan',
 };
 
 const KIND_ICON: Record<string, string> = {
@@ -31,6 +56,8 @@ const KIND_ICON: Record<string, string> = {
   indicator: '%',
   probability: '?',
   alert: '!',
+  trade_tick: '*',
+  order_status: '>',
 };
 
 function matches(filter: Filter, kind: string): boolean {
@@ -39,8 +66,16 @@ function matches(filter: Filter, kind: string): boolean {
   if (filter === 'NEWS') return kind === 'news';
   if (filter === 'IND') return kind === 'indicator';
   if (filter === 'PROB') return kind === 'probability';
-  if (filter === 'ALERT') return kind === 'alert';
+  if (filter === 'ALERT') return kind === 'alert' || kind === 'order_status';
   return false;
+}
+
+function isInDefaultSet(filter: Filter, kind: string): boolean {
+  // When no filter chip narrows the view (ALL), we still restrict the
+  // stream to the velocity-only default set. Non-ALL chips explicitly
+  // want a specific kind so we bypass the default filter for those.
+  if (filter === 'ALL') return DEFAULT_KINDS.has(kind);
+  return true;
 }
 
 function fmtCompactUsd(v: number): string {
@@ -86,6 +121,18 @@ function summarize(e: AnyEvent): string {
       const name = typeof e.ruleName === 'string' ? e.ruleName : 'rule';
       return `fired: ${name}`;
     }
+    case 'trade_tick': {
+      const asset = typeof e.assetId === 'number' ? `#${e.assetId}` : '';
+      const price = typeof e.price === 'number' ? e.price.toFixed(2) : '';
+      const side = typeof e.side === 'string' ? e.side.toUpperCase() : '';
+      return `${asset} ${side} ${price}`.trim();
+    }
+    case 'order_status': {
+      const status = typeof e.status === 'string' ? e.status.toUpperCase() : '';
+      const asset = typeof e.assetId === 'number' ? `#${e.assetId}` : '';
+      const side = typeof e.side === 'string' ? e.side.toUpperCase() : '';
+      return `${asset} ${side} ${status}`.trim();
+    }
     default:
       return JSON.stringify(e).slice(0, 80);
   }
@@ -97,6 +144,10 @@ export function EventFirehose() {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [now, setNow] = useState<number>(() => Math.floor(Date.now() / 1000));
   const seenRef = useRef<Set<string>>(new Set());
+  // Per-asset trade_tick throttle state. Keyed by assetId; value is the
+  // last-accepted wall-clock timestamp in ms. A Map avoids the churn of
+  // rewriting an object ref on every tick.
+  const lastTradeTickMsRef = useRef<Map<number, number>>(new Map());
 
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -107,6 +158,17 @@ export function EventFirehose() {
     if (!lastEvent || typeof lastEvent !== 'object') return;
     const e = lastEvent as AnyEvent;
     if (!e.kind || !TOPICS.includes(e.kind)) return;
+
+    // Trade_tick throttle: drop any tick for an asset we've already
+    // admitted within TRADE_TICK_MIN_INTERVAL_MS. Keeps the Firehose
+    // readable even when BTC/ETH are ticking many times per second.
+    if (e.kind === 'trade_tick' && typeof e.assetId === 'number') {
+      const nowMs = Date.now();
+      const last = lastTradeTickMsRef.current.get(e.assetId) ?? 0;
+      if (nowMs - last < TRADE_TICK_MIN_INTERVAL_MS) return;
+      lastTradeTickMsRef.current.set(e.assetId, nowMs);
+    }
+
     const key = `${e.kind}:${e.id ?? Math.random()}:${e.ts ?? ''}`;
     if (seenRef.current.has(key)) return;
     seenRef.current.add(key);
@@ -121,7 +183,10 @@ export function EventFirehose() {
     });
   }, [lastEvent]);
 
-  const filtered = useMemo(() => rows.filter((r) => matches(filter, r.kind)), [rows, filter]);
+  const filtered = useMemo(
+    () => rows.filter((r) => matches(filter, r.kind) && isInDefaultSet(filter, r.kind)),
+    [rows, filter],
+  );
 
   const filters: Filter[] = ['ALL', 'WHALES', 'NEWS', 'IND', 'PROB', 'ALERT'];
 

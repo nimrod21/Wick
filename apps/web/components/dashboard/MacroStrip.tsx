@@ -108,8 +108,9 @@ export function MacroStrip() {
   const vix = byName(list, 'vix');
   const btcDom = byName(list, 'btc_dominance');
 
-  const [now, setNow] = useState<Date>(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -150,7 +151,7 @@ export function MacroStrip() {
       />
       <Pill
         label="CLOCK"
-        value={timeFormatter.format(now)}
+        value={now ? timeFormatter.format(now) : '—'}
         sub="Local"
         colorCls="text-neon-cyan"
       />

@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react';
 type SseEvent = { kind?: string; assetId?: number; [k: string]: unknown };
 type Subscriber = (ev: SseEvent) => void;
 
-const SSE_URL = 'http://127.0.0.1:3001/stream?topics=candle,trade_tick,orderbook,whale_tx,news,indicator,probability,alert,order_status';
+const SSE_URL = '/stream?topics=candle,trade_tick,orderbook,whale_tx,news,indicator,probability,alert,order_status';
 const KNOWN_KINDS = [
   'candle','trade_tick','orderbook','whale_tx','news',
   'indicator','probability','alert','order_status','hello',

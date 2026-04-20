@@ -20,6 +20,7 @@ export function StatusDot() {
       {/* Inline keyframes so we don't depend on globals.css having this animation. */}
       <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
       <span
+        role="status"
         title={title}
         aria-label={title}
         style={{

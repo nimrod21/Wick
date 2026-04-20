@@ -18,7 +18,7 @@ const config: Config = {
         'neon-purple': 'var(--neon-purple)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
-        'text-dim': 'var(--text-dim)',
+        'text-dim': '#8a8ab8',
       },
       fontFamily: {
         'pixel': ['"Press Start 2P"', 'monospace'],

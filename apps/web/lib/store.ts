@@ -35,9 +35,13 @@ export const useLiveModeStore = create<LiveModeState>((set, get) => ({
 export type TradingType = 'crypto' | 'metals' | 'commodities' | 'stocks';
 export type Timeframe = '1m' | '3m' | '15m' | '1h' | '4h' | '1d' | '1w';
 
+export type SelectedAsset = { id: number; symbol: string; displayName: string };
+
 interface TradingState {
   activeAsset: Record<TradingType, number | null>;
   setActiveAsset: (t: TradingType, id: number | null) => void;
+  selectedAsset: Record<TradingType, SelectedAsset | null>;
+  setSelectedAsset: (t: TradingType, asset: SelectedAsset | null) => void;
   timeframe: Record<TradingType, Timeframe>;
   setTimeframe: (t: TradingType, tf: Timeframe) => void;
 }
@@ -51,6 +55,17 @@ export const useTradingStore = create<TradingState>((set) => ({
   },
   setActiveAsset: (t, id) =>
     set((s) => ({ activeAsset: { ...s.activeAsset, [t]: id } })),
+  selectedAsset: {
+    crypto: null,
+    metals: null,
+    commodities: null,
+    stocks: null,
+  },
+  setSelectedAsset: (t, asset) =>
+    set((s) => ({
+      selectedAsset: { ...s.selectedAsset, [t]: asset },
+      activeAsset: { ...s.activeAsset, [t]: asset ? asset.id : null },
+    })),
   timeframe: {
     crypto: '1h',
     metals: '1h',

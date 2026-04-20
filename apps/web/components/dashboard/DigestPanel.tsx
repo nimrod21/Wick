@@ -5,7 +5,6 @@ import { TopWhaleMovers } from '@/components/dashboard/TopWhaleMovers';
 import { HeadlineNews } from '@/components/dashboard/HeadlineNews';
 import { ActiveAlertsStrip } from '@/components/dashboard/ActiveAlertsStrip';
 import { PaperPnL } from '@/components/dashboard/PaperPnL';
-import { MacroWatch } from '@/components/dashboard/MacroWatch';
 
 function Cell({ children }: { children: ReactNode }) {
   return (
@@ -37,11 +36,6 @@ export function DigestPanel() {
           <Cell>
             <HeadlineNews />
           </Cell>
-          <div className="col-span-2">
-            <Cell>
-              <MacroWatch />
-            </Cell>
-          </div>
         </div>
       </div>
     </div>

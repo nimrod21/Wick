@@ -82,7 +82,7 @@ export default function DashboardPage() {
 
         <DigestPanel />
 
-        <div className="min-h-[600px]">
+        <div className="h-[720px]">
           <EventFirehose />
         </div>
       </div>

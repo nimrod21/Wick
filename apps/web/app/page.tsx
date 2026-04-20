@@ -47,45 +47,44 @@ export default function DashboardPage() {
 
       <TickerTape />
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1.4fr) minmax(320px, 1fr) 340px' }}>
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="pixel-font text-[11px] text-neon-purple glow uppercase tracking-wider">
-              Probability Scores
-            </h2>
-            <button
-              type="button"
-              onClick={() => setWeightsOpen(true)}
-              className="pixel-font text-[9px] text-neon-purple glow px-3 py-1 border-2 border-neon-purple hover:bg-neon-purple/10"
-            >
-              WEIGHTS
-            </button>
-          </div>
-          <div
-            className="grid gap-3"
-            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
-          >
-            {assets.length === 0 ? (
-              <div className="col-span-full bg-bg-terminal border-2 border-border-dim p-4 vt-font text-text-dim">
-                No crypto assets enabled. Add some in Settings to score them here.
-              </div>
-            ) : (
-              assets.map((a) => (
-                <ProbabilityCard
-                  key={a.id}
-                  asset={{ id: a.id, symbol: a.symbol, displayName: a.displayName }}
-                />
-              ))
-            )}
-          </div>
-        </section>
-
+      <div className="grid gap-3 grid-cols-2">
         <DigestPanel />
-
         <div className="h-[720px]">
           <EventFirehose />
         </div>
       </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="pixel-font text-[11px] text-neon-purple glow uppercase tracking-wider">
+            Probability Scores
+          </h2>
+          <button
+            type="button"
+            onClick={() => setWeightsOpen(true)}
+            className="pixel-font text-[9px] text-neon-purple glow px-3 py-1 border-2 border-neon-purple hover:bg-neon-purple/10"
+          >
+            WEIGHTS
+          </button>
+        </div>
+        <div
+          className="grid gap-3"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+        >
+          {assets.length === 0 ? (
+            <div className="col-span-full bg-bg-terminal border-2 border-border-dim p-4 vt-font text-text-dim">
+              No crypto assets enabled. Add some in Settings to score them here.
+            </div>
+          ) : (
+            assets.map((a) => (
+              <ProbabilityCard
+                key={a.id}
+                asset={{ id: a.id, symbol: a.symbol, displayName: a.displayName }}
+              />
+            ))
+          )}
+        </div>
+      </section>
 
       <section className="space-y-2">
         <h2 className="pixel-font text-[11px] text-neon-cyan glow uppercase tracking-wider">

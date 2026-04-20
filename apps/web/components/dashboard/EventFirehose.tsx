@@ -19,7 +19,6 @@ const MAX_ROWS = 200;
 // Velocity-only default set. News moved to the HeadlineNews Digest widget;
 // it's still reachable via the NEWS chip (or ALL) without changes here.
 const DEFAULT_KINDS = new Set([
-  'trade_tick',
   'probability',
   'alert',
   'order_status',

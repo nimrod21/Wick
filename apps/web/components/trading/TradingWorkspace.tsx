@@ -94,7 +94,7 @@ export function TradingWorkspace() {
   const selectedId = selected?.id ?? null;
 
   return (
-    <div className="min-h-[calc(100vh-7rem)] flex flex-col gap-3">
+    <div className="h-[calc(100vh-7rem)] flex flex-col gap-3 overflow-hidden">
       <MarketStats assetId={selectedId} />
 
       <div
@@ -126,8 +126,8 @@ export function TradingWorkspace() {
         </div>
 
         <div
-          className="grid gap-3 min-h-0"
-          style={{ gridTemplateRows: 'minmax(200px, 1fr) minmax(180px, 1fr) auto' }}
+          className="grid gap-3 min-h-0 overflow-y-auto"
+          style={{ gridTemplateRows: 'minmax(180px, 1fr) minmax(160px, 1fr) auto' }}
         >
           {selected ? (
             supportsOrderbook ? (

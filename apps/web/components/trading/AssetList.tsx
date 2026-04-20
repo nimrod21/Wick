@@ -70,7 +70,7 @@ export function AssetList({
 }: AssetListProps) {
   const [query, setQuery] = useState('');
   const activeId = useTradingStore((s) => s.activeAsset[tradingType]);
-  const setActiveAsset = useTradingStore((s) => s.setActiveAsset);
+  const setSelectedAsset = useTradingStore((s) => s.setSelectedAsset);
 
   const assetsKey = useMemo(() => ['assets-list', ...assetTypes], [assetTypes]);
 
@@ -174,7 +174,13 @@ export function AssetList({
             <button
               key={a.id}
               type="button"
-              onClick={() => setActiveAsset(tradingType, a.id)}
+              onClick={() =>
+                setSelectedAsset(tradingType, {
+                  id: a.id,
+                  symbol: a.symbol,
+                  displayName: a.displayName,
+                })
+              }
               className={rowCls}
             >
               <span className="flex flex-col items-start min-w-0">

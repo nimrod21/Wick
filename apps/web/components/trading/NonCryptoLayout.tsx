@@ -31,6 +31,7 @@ export function NonCryptoLayout({
   proxyNote,
 }: NonCryptoLayoutProps) {
   const activeAsset = useTradingStore((s) => s.activeAsset[tradingType]);
+  const selected = useTradingStore((s) => s.selectedAsset[tradingType]);
   const timeframe = useTradingStore((s) => s.timeframe[tradingType]);
 
   return (
@@ -47,7 +48,7 @@ export function NonCryptoLayout({
         <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border-dim">
             <h2 className="pixel-font text-[10px] text-neon-cyan">
-              {activeAsset ? `ASSET #${activeAsset}` : 'SELECT AN ASSET'}
+              {selected ? `${selected.symbol} · ${selected.displayName}` : 'SELECT AN ASSET'}
             </h2>
             <TimeframeSwitcher tradingType={tradingType} />
           </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -47,18 +48,29 @@ function Pill({
   value,
   sub,
   colorCls,
+  keyMissing,
 }: {
   label: string;
   value: string;
   sub?: string;
   colorCls: string;
+  keyMissing?: boolean;
 }) {
   return (
     <div className="flex-1 bg-bg-terminal border-2 border-border-dim px-4 py-3 flex flex-col gap-1 min-w-[140px]">
       <div className="pixel-font text-[9px] text-text-secondary uppercase tracking-widest">
         {label}
       </div>
-      <div className={`vt-font text-3xl glow ${colorCls} leading-none`}>{value}</div>
+      {keyMissing ? (
+        <Link
+          href="/settings"
+          className="pixel-font text-[9px] text-neon-amber glow px-2 py-1 border border-neon-amber inline-block self-start hover:bg-neon-amber/10"
+        >
+          KEY MISSING →
+        </Link>
+      ) : (
+        <div className={`vt-font text-3xl glow ${colorCls} leading-none`}>{value}</div>
+      )}
       {sub ? (
         <div className="pixel-font text-[8px] text-text-dim uppercase tracking-wider whitespace-nowrap">
           {sub}
@@ -121,12 +133,14 @@ export function MacroStrip() {
         value={fmtCompact(dxy?.value ?? null)}
         sub="USD Idx"
         colorCls="text-neon-green"
+        keyMissing={dxy?.value === undefined || dxy?.value === null}
       />
       <Pill
         label="VIX"
         value={fmtCompact(vix?.value ?? null)}
         sub="Volatility"
         colorCls="text-neon-red"
+        keyMissing={vix?.value === undefined || vix?.value === null}
       />
       <Pill
         label="BTC.D"

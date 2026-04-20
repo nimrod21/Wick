@@ -122,7 +122,7 @@ export function MarketStats({ assetId }: MarketStatsProps) {
   }, [data]);
 
   if (assetId === null) {
-    return <div className="flex gap-8 items-center px-4 py-2 border border-border-dim bg-bg-terminal min-h-[54px]" />;
+    return null;
   }
 
   const currentPrice = livePrice ?? stats.lastClose;

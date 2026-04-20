@@ -44,6 +44,10 @@ function sentimentClass(sent: number | null | undefined): string {
 export function NewsCard({ event, onOpen, now }: NewsCardProps) {
   const sentChip = sentimentClass(event.sentiment);
   const rel = relativeTime(event.ts, now);
+  const hasSentiment =
+    event.sentiment !== null &&
+    event.sentiment !== undefined &&
+    Number.isFinite(event.sentiment);
   return (
     <button
       type="button"
@@ -55,11 +59,13 @@ export function NewsCard({ event, onOpen, now }: NewsCardProps) {
           {event.source}
         </span>
         <span className="vt-font text-[12px] text-text-dim">{rel} ago</span>
-        <span
-          className={`pixel-font text-[8px] px-2 py-1 border-2 ${sentChip}`}
-        >
-          {sentimentLabel(event.sentiment)}
-        </span>
+        {hasSentiment ? (
+          <span
+            className={`pixel-font text-[8px] px-2 py-1 border-2 ${sentChip}`}
+          >
+            {sentimentLabel(event.sentiment)}
+          </span>
+        ) : null}
       </div>
       <h3 className="vt-font text-[18px] text-text-primary leading-tight">
         {event.title}

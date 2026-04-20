@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   createChart,
@@ -11,6 +12,42 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { api } from '@/lib/api';
+
+// Macro metrics driven by unconfigured API keys (Twelve Data / FRED).
+// Names are compared case-insensitively against the `name` prop.
+const KEYED_MACRO_NAMES = new Set<string>([
+  'DXY',
+  'VIX',
+  'CPI',
+  'CPIAUCSL',
+  '10Y',
+  'UST10Y',
+  'DGS10',
+  'FED_FUNDS',
+  'FEDFUNDS',
+  'DFF',
+  'UNEMPLOYMENT',
+  'UNRATE',
+  'WTI',
+  'WTIUSD',
+  'DCOILWTICO',
+]);
+
+function isKeyedMacro(name: string): boolean {
+  return KEYED_MACRO_NAMES.has(name.toUpperCase());
+}
+
+function KeyMissingChip() {
+  return (
+    <Link
+      href="/settings"
+      onClick={(e) => e.stopPropagation()}
+      className="pixel-font text-[9px] text-neon-amber glow px-2 py-1 border border-neon-amber inline-block hover:bg-neon-amber/10"
+    >
+      KEY MISSING →
+    </Link>
+  );
+}
 
 type Range = '1d' | '7d' | '30d' | '1y';
 
@@ -283,13 +320,21 @@ export function IndicatorPanel({
 
   const colorCls = COLOR_TEXT_CLASS[colorVar] ?? COLOR_TEXT_CLASS['neon-cyan']!;
   const cssColor = CSS_COLOR[colorVar] ?? CSS_COLOR['neon-cyan']!;
+  const showKeyMissing = current === null && isKeyedMacro(name);
 
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(true)}
-        className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-purple p-3 transition-colors"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
+        className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-purple p-3 transition-colors cursor-pointer"
       >
         <div className="flex items-center justify-between">
           <span className="pixel-font text-[10px] text-text-secondary uppercase">
@@ -302,15 +347,21 @@ export function IndicatorPanel({
           ) : null}
         </div>
         <div className="mt-2 flex items-baseline gap-2">
-          <span className={`vt-font text-4xl glow ${colorCls}`}>
-            {current !== null ? fmt(current) : '—'}
-          </span>
-          <span className={`vt-font text-sm ${delta.cls}`}>{delta.text}</span>
+          {showKeyMissing ? (
+            <KeyMissingChip />
+          ) : (
+            <>
+              <span className={`vt-font text-4xl glow ${colorCls}`}>
+                {current !== null ? fmt(current) : '—'}
+              </span>
+              <span className={`vt-font text-sm ${delta.cls}`}>{delta.text}</span>
+            </>
+          )}
         </div>
         <div className="mt-2">
           <MiniPolyline points={points} color={cssColor} />
         </div>
-      </button>
+      </div>
       {open ? (
         <HistoryDrawer
           name={name}

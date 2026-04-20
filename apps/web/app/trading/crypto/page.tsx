@@ -13,6 +13,7 @@ const TRADING_TYPE = 'crypto' as const;
 
 export default function CryptoTradingPage() {
   const activeAsset = useTradingStore((s) => s.activeAsset[TRADING_TYPE]);
+  const selected = useTradingStore((s) => s.selectedAsset.crypto);
   const timeframe = useTradingStore((s) => s.timeframe[TRADING_TYPE]);
 
   // Explicit grid rows: top stats strip is auto-sized, middle body fills
@@ -35,7 +36,7 @@ export default function CryptoTradingPage() {
         <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0 min-w-0">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border-dim shrink-0">
             <h2 className="pixel-font text-[10px] text-neon-cyan">
-              {activeAsset ? `ASSET #${activeAsset}` : 'SELECT AN ASSET'}
+              {selected ? `${selected.symbol} · ${selected.displayName}` : 'SELECT AN ASSET'}
             </h2>
             <TimeframeSwitcher tradingType={TRADING_TYPE} />
           </div>

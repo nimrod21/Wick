@@ -129,27 +129,25 @@ function AssetRow({ asset, livePrice, active, onSelect }: AssetRowProps) {
   const priceStr = formatPrice(livePrice);
 
   const rowCls = active
-    ? 'px-2 py-1 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated flex items-center justify-between gap-2 w-full text-left'
-    : 'px-2 py-1 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated flex items-center justify-between gap-2 w-full text-left';
+    ? 'grid grid-cols-[20px_1fr_auto] items-center gap-2 px-3 py-2 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated w-full text-left'
+    : 'grid grid-cols-[20px_1fr_auto] items-center gap-2 px-3 py-2 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated w-full text-left';
 
   return (
     <button type="button" onClick={onSelect} className={rowCls}>
-      <span className="flex items-center gap-2 min-w-0">
-        <span className="pixel-font text-[9px] text-text-dim border border-border-dim px-1 leading-none py-[2px]">
-          {TYPE_BADGE[asset.type]}
+      <span className="pixel-font text-[9px] text-text-dim border border-border-dim w-5 h-5 flex items-center justify-center leading-none">
+        {TYPE_BADGE[asset.type]}
+      </span>
+      <span className="flex flex-col min-w-0">
+        <span className="pixel-font text-[10px] text-text-primary truncate">
+          {asset.symbol}
         </span>
-        <span className="flex flex-col items-start min-w-0">
-          <span className="pixel-font text-[10px] text-text-primary truncate">
-            {asset.symbol}
-          </span>
-          <span className="vt-font text-[14px] text-text-secondary truncate">
-            {asset.displayName}
-          </span>
+        <span className="vt-font text-[13px] text-text-secondary truncate leading-tight">
+          {asset.displayName}
         </span>
       </span>
-      <span className="flex flex-col items-end min-w-0">
-        <span className="vt-font text-[14px] text-text-primary">{priceStr}</span>
-        <span className={`vt-font text-[12px] ${changeColor}`}>{changeStr}</span>
+      <span className="flex flex-col items-end">
+        <span className="vt-font text-[14px] text-text-primary tabular-nums">{priceStr}</span>
+        <span className={`vt-font text-[12px] leading-tight tabular-nums ${changeColor}`}>{changeStr}</span>
       </span>
     </button>
   );
@@ -215,35 +213,35 @@ export function AssetList() {
 
   const pillCls = (active: boolean) =>
     active
-      ? 'pixel-font text-[9px] px-3 py-1 border-2 border-neon-cyan text-neon-cyan glow'
-      : 'pixel-font text-[9px] px-3 py-1 border-2 border-border-dim text-text-dim hover:border-neon-cyan hover:text-neon-cyan';
+      ? 'pixel-font text-[8px] px-1.5 py-1 border border-neon-cyan text-neon-cyan glow flex-1 text-center'
+      : 'pixel-font text-[8px] px-1.5 py-1 border border-border-dim text-text-dim hover:border-neon-cyan hover:text-neon-cyan flex-1 text-center';
 
   return (
-    <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0 h-full">
-      <div className="flex flex-wrap gap-1 p-2 border-b border-border-dim shrink-0">
-        {TYPE_PILLS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            onClick={() => setTypeFilter(p.value)}
-            className={pillCls(typeFilter === p.value)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-      <div className="p-2 border-b border-border-dim shrink-0">
+    <div className="flex flex-col border border-border-dim bg-bg-terminal h-full">
+      <div className="p-2 border-b border-border-dim shrink-0 flex flex-col gap-2">
+        <div className="flex gap-1">
+          {TYPE_PILLS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => setTypeFilter(p.value)}
+              className={pillCls(typeFilter === p.value)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search…"
-          className="w-full px-3 py-1 bg-bg-void border border-border-dim text-text-primary vt-font text-sm focus:outline-none focus:border-neon-cyan"
+          className="w-full px-2 py-1 bg-bg-void border border-border-dim text-text-primary vt-font text-sm focus:outline-none focus:border-neon-cyan"
         />
       </div>
-      <div className="flex-1 overflow-y-auto flex flex-col gap-1 p-2">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
         {filtered.length === 0 ? (
-          <div className="vt-font text-text-dim text-sm px-2 py-1">
+          <div className="vt-font text-text-dim text-sm px-3 py-2">
             {assetsData ? 'NO MATCHES' : 'LOADING…'}
           </div>
         ) : (

@@ -94,46 +94,56 @@ export function TradingWorkspace() {
   const selectedId = selected?.id ?? null;
 
   return (
-    <div className="h-[calc(100vh-7rem)] flex flex-col gap-3 overflow-hidden">
+    <div className="flex flex-col gap-4">
       <MarketStats assetId={selectedId} />
 
       <div
-        className="grid gap-3 flex-1 min-h-0"
-        style={{ gridTemplateColumns: '260px minmax(0, 1fr) 340px' }}
+        className="grid gap-4 items-start"
+        style={{ gridTemplateColumns: '280px minmax(0, 1fr) 360px' }}
       >
-        <AssetList />
+        {/* LEFT: sticky sidebar */}
+        <aside className="sticky top-[72px] h-[calc(100vh-96px)]">
+          <AssetList />
+        </aside>
 
-        <div className="flex flex-col border border-border-dim bg-bg-terminal min-h-0 min-w-0">
-          <div className="h-9 flex items-center justify-between px-3 border-b border-border-dim shrink-0">
-            <h2 className="pixel-font text-[10px] text-neon-cyan">
-              {selected ? `${selected.symbol} · ${selected.displayName}` : 'SELECT AN ASSET'}
-            </h2>
-            <TimeframeSwitcher />
+        {/* CENTER: chart + OpenOrders below */}
+        <div className="flex flex-col gap-4 min-w-0">
+          <div className="h-[620px] flex flex-col border border-border-dim bg-bg-terminal min-w-0">
+            <div className="h-10 flex items-center justify-between px-3 border-b border-border-dim shrink-0">
+              <h2 className="pixel-font text-[11px] text-neon-cyan glow">
+                {selected ? `${selected.symbol} · ${selected.displayName}` : 'SELECT AN ASSET'}
+              </h2>
+              <TimeframeSwitcher />
+            </div>
+            <div className="flex-1 min-h-0 min-w-0 relative">
+              {selected ? (
+                <LightweightChart
+                  assetId={selected.id}
+                  symbol={selected.symbol}
+                  timeframe={timeframe}
+                />
+              ) : (
+                <div className="h-full flex items-center justify-center text-text-dim vt-font text-lg">
+                  Pick an asset from the list.
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex-1 min-h-0 min-w-0 relative">
-            {selected ? (
-              <LightweightChart
-                assetId={selected.id}
-                symbol={selected.symbol}
-                timeframe={timeframe}
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-text-dim vt-font text-lg">
-                Pick an asset from the list.
-              </div>
-            )}
-          </div>
+
+          <OpenOrdersPositionsBar />
         </div>
 
-        <div
-          className="grid gap-3 min-h-0 overflow-y-auto"
-          style={{ gridTemplateRows: 'minmax(180px, 1fr) minmax(160px, 1fr) auto' }}
-        >
+        {/* RIGHT: stacked panels, natural heights */}
+        <div className="flex flex-col gap-4">
           {selected ? (
             supportsOrderbook ? (
               <>
-                <Orderbook assetId={selectedId} />
-                <RecentTrades assetId={selectedId} />
+                <div className="h-[380px] flex flex-col">
+                  <Orderbook assetId={selectedId} />
+                </div>
+                <div className="h-[280px] flex flex-col">
+                  <RecentTrades assetId={selectedId} />
+                </div>
               </>
             ) : (
               <>
@@ -150,8 +160,6 @@ export function TradingWorkspace() {
           <OrderEntry assetId={selectedId} />
         </div>
       </div>
-
-      <OpenOrdersPositionsBar />
     </div>
   );
 }

@@ -17,8 +17,8 @@ export function TimeframeSwitcher({ tradingType }: Props) {
       {TIMEFRAMES.map((t) => {
         const active = t === tf;
         const cls = active
-          ? 'pixel-font text-[10px] px-3 py-1 border-2 transition-none bg-neon-cyan text-bg-void border-neon-cyan'
-          : 'pixel-font text-[10px] px-3 py-1 border-2 transition-none text-text-secondary border-border-dim hover:border-neon-cyan hover:text-neon-cyan';
+          ? 'vt-font text-sm px-2 py-0.5 border-2 transition-none bg-neon-cyan text-bg-void border-neon-cyan'
+          : 'vt-font text-sm px-2 py-0.5 border-2 transition-none text-text-secondary border-border-dim hover:border-neon-cyan hover:text-neon-cyan';
         return (
           <button
             key={t}

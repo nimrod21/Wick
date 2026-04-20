@@ -294,8 +294,43 @@ export function OrderEntry({ assetId }: OrderEntryProps) {
     return (
       <div className="flex flex-col gap-3">
         <AccountBalanceHeader />
-        <div className="flex flex-col gap-2 p-4 border border-border-dim bg-bg-terminal items-center justify-center min-h-[200px]">
-          <span className="pixel-font text-[11px] text-neon-amber glow">SELECT AN ASSET</span>
+        <div className="flex flex-col gap-2 p-4 border border-border-dim bg-bg-terminal opacity-50 pointer-events-none">
+          <div className="flex gap-1 mb-2">
+            <span className="pixel-font text-[10px] px-3 py-1 border-2 bg-neon-cyan text-bg-void border-neon-cyan">
+              MARKET
+            </span>
+            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
+              LIMIT
+            </span>
+            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
+              STOP
+            </span>
+          </div>
+          <div className="flex gap-1">
+            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
+              BUY
+            </span>
+            <span className="pixel-font text-[10px] px-3 py-1 border-2 text-text-secondary border-border-dim">
+              SELL
+            </span>
+          </div>
+          <div className="flex flex-col gap-1 mt-2">
+            <span className="pixel-font text-[8px] text-text-secondary uppercase">Qty</span>
+            <div className="bg-bg-void border border-border-dim px-2 py-1 vt-font text-lg text-text-dim">
+              0.0000
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <span className="pixel-font text-[8px] text-text-secondary uppercase">Notional</span>
+            <span className="vt-font text-lg text-text-dim">—</span>
+          </div>
+          <button
+            type="button"
+            disabled
+            className="bg-neon-green text-bg-void pixel-font text-[11px] py-3 opacity-40 cursor-not-allowed"
+          >
+            PLACE PAPER ORDER
+          </button>
         </div>
         <BottomTabs bottomTab={bottomTab} setBottomTab={setBottomTab} />
       </div>

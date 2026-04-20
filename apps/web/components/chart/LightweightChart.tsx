@@ -129,12 +129,13 @@ export function LightweightChart({ assetId, timeframe, height }: LightweightChar
     });
 
     const volumeSeries = chart.addHistogramSeries({
-      priceScaleId: '',
+      priceScaleId: 'volume',
       priceFormat: { type: 'volume' },
       color: '#55557a',
     });
     volumeSeries.priceScale().applyOptions({
       scaleMargins: { top: 0.75, bottom: 0 },
+      visible: false,
     });
 
     chartRef.current = chart;

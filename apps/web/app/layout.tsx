@@ -3,6 +3,7 @@ import './globals.css';
 import { Scanlines } from '@/components/shell/Scanlines';
 import { Navbar } from '@/components/shell/Navbar';
 import { NotificationsBridge } from '@/components/shell/NotificationsBridge';
+import { DesktopOnlyGate } from '@/components/shell/DesktopOnlyGate';
 import { QueryProvider } from '@/lib/query';
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Scanlines />
           <Navbar />
           <NotificationsBridge />
+          <DesktopOnlyGate />
           <main className="pt-20 pb-8 px-6">{children}</main>
         </QueryProvider>
       </body>

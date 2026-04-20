@@ -80,8 +80,15 @@ export function RecentTrades({ assetId }: RecentTradesProps) {
 
   if (assetId === null) {
     return (
-      <div className="flex flex-col border border-border-dim bg-bg-terminal h-full items-center justify-center overflow-hidden">
-        <span className="pixel-font text-[11px] text-neon-amber glow">SELECT AN ASSET</span>
+      <div className="flex flex-col border border-border-dim bg-bg-terminal h-full overflow-hidden">
+        <div className="pixel-font text-[9px] text-text-secondary px-2 py-1 border-b border-border-dim flex justify-between">
+          <span>TIME</span>
+          <span>PRICE</span>
+          <span>QTY</span>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <span className="vt-font text-text-dim text-xs">—</span>
+        </div>
       </div>
     );
   }

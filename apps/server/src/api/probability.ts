@@ -52,9 +52,17 @@ const SIGNAL_NAMES = [
   'whale_netflow_to_exchanges',
   'news_sentiment_aggregate',
   'price_momentum_1h',
+  'price_momentum_4h',
   'price_momentum_24h',
+  'rsi_14',
+  'macd_histogram',
+  'macd_line',
+  'ema20_slope_4h',
+  'ema200_distance',
 ] as const;
 
+// Non-strict: unknown fields in the body are ignored so older clients
+// posting a subset (or newer clients we haven't taught yet) still succeed.
 const weightsBodySchema = z
   .object(
     SIGNAL_NAMES.reduce<Record<string, z.ZodOptional<z.ZodNumber>>>((acc, k) => {
@@ -62,7 +70,7 @@ const weightsBodySchema = z
       return acc;
     }, {}),
   )
-  .strict();
+  .passthrough();
 
 interface ProbRow {
   id: number;
@@ -138,7 +146,15 @@ export async function registerProbabilityRoutes(app: FastifyInstance): Promise<v
       return reply.code(400).send({ error: 'bad query', issues: parsed.error.issues });
     }
     const { assetId, horizon } = parsed.data;
-    const limit = parsed.data.limit ?? 500;
+    // When the caller supplies `from`/`to` they want a time-series — use the
+    // legacy default of 500. Otherwise default to 20 (drawer use case). Cap
+    // at 200 for the range-less form, 5000 for range queries.
+    const isRangeQuery = parsed.data.from !== undefined || parsed.data.to !== undefined;
+    const defaultLimit = isRangeQuery ? 500 : 20;
+    const maxLimit = isRangeQuery ? 5000 : 200;
+    const rawLimit = parsed.data.limit ?? defaultLimit;
+    const limit = Math.min(rawLimit, maxLimit);
+
     const wheres: string[] = ['asset_id = ?', 'horizon = ?'];
     const params: Array<string | number> = [assetId, horizon];
     if (parsed.data.from !== undefined) {
@@ -155,9 +171,17 @@ export async function registerProbabilityRoutes(app: FastifyInstance): Promise<v
                   ORDER BY ts DESC
                   LIMIT ?`;
     params.push(limit);
-    const rows = db.prepare(sql).all(...params) as ProbRow[];
-    const ordered = rows.slice().reverse();
+    const descRows = db.prepare(sql).all(...params) as ProbRow[];
+    const rows = descRows.map((r) => ({
+      ts: r.ts,
+      bullishProb: r.bullish_prob,
+      confidence: r.confidence,
+      contributing: parseContributing(r.contributing_json),
+    }));
+    // `points` keeps the legacy ascending chart-friendly shape.
+    const ordered = descRows.slice().reverse();
     return {
+      rows,
       points: ordered.map((r) => ({
         ts: r.ts,
         bullishProb: r.bullish_prob,
@@ -204,7 +228,14 @@ export async function registerProbabilityRoutes(app: FastifyInstance): Promise<v
     if (!parsed.success) {
       return reply.code(400).send({ error: 'bad body', issues: parsed.error.issues });
     }
-    const merged = { ...getCurrentWeights(), ...parsed.data };
+    // Only keep known signal keys — unknown passthrough fields are dropped so
+    // they never hit the on-disk weights file.
+    const known: Record<string, number> = {};
+    for (const k of SIGNAL_NAMES) {
+      const v = parsed.data[k];
+      if (typeof v === 'number') known[k] = v;
+    }
+    const merged = { ...getCurrentWeights(), ...known };
     try {
       await fs.writeFile(weightsFile(), `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
     } catch (err) {

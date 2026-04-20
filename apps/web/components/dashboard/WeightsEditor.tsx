@@ -15,7 +15,13 @@ const SIGNAL_NAMES = [
   'whale_netflow_to_exchanges',
   'news_sentiment_aggregate',
   'price_momentum_1h',
+  'price_momentum_4h',
   'price_momentum_24h',
+  'rsi_14',
+  'macd_histogram',
+  'macd_line',
+  'ema20_slope_4h',
+  'ema200_distance',
 ] as const;
 
 type SignalName = (typeof SIGNAL_NAMES)[number];
@@ -87,7 +93,7 @@ export function WeightsEditor({ onClose }: { onClose: () => void }) {
                   <input
                     type="range"
                     min={0}
-                    max={1}
+                    max={5}
                     step={0.1}
                     value={v}
                     onChange={(e) => {

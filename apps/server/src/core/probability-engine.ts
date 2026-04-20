@@ -6,8 +6,9 @@
  * Weights live in `seed/probability_weights.json` and are hot-reloaded
  * on file change via `fs.watch`.
  *
- * Horizons are currently informational — all three use the same instant
- * signal mix. Future refinement can vary window lengths per-horizon.
+ * Each horizon (1H, 4H, 24H) now uses a tailored subset of signals so
+ * the short-term view emphasises microstructure and the long-term view
+ * emphasises macro/trend.
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
@@ -35,7 +36,13 @@ export type SignalName =
   | 'whale_netflow_to_exchanges'
   | 'news_sentiment_aggregate'
   | 'price_momentum_1h'
-  | 'price_momentum_24h';
+  | 'price_momentum_4h'
+  | 'price_momentum_24h'
+  | 'rsi_14'
+  | 'macd_histogram'
+  | 'macd_line'
+  | 'ema20_slope_4h'
+  | 'ema200_distance';
 
 type Weights = Record<SignalName, number>;
 
@@ -58,8 +65,42 @@ const DEFAULT_WEIGHTS: Weights = {
   whale_netflow_to_exchanges: 0.9,
   news_sentiment_aggregate: 0.7,
   price_momentum_1h: 0.6,
+  price_momentum_4h: 0.5,
   price_momentum_24h: 0.4,
+  rsi_14: 0.6,
+  macd_histogram: 0.7,
+  macd_line: 0.4,
+  ema20_slope_4h: 0.5,
+  ema200_distance: 0.5,
 };
+
+// Per-horizon signal subsets. Each horizon's score is computed from
+// ONLY the signals listed here.
+const HORIZON_SIGNALS: Record<Horizon, readonly SignalName[]> = {
+  '1h': [
+    'price_momentum_1h',
+    'funding_rate',
+    'open_interest_delta',
+    'rsi_14',
+    'macd_histogram',
+  ],
+  '4h': [
+    'price_momentum_4h',
+    'fear_greed_delta',
+    'news_sentiment_aggregate',
+    'ema20_slope_4h',
+    'macd_line',
+  ],
+  '24h': [
+    'price_momentum_24h',
+    'dxy_trend',
+    'vix_level',
+    'btc_dominance_trend',
+    'whale_netflow_to_exchanges',
+    'fear_greed_level',
+    'ema200_distance',
+  ],
+} as const;
 
 // Resolve the weights file relative to this module's source/dist location.
 // In dist/core/probability-engine.js -> dist/seed/probability_weights.json.
@@ -132,6 +173,10 @@ export function reloadWeights(): Weights {
 
 export function getCurrentWeights(): Weights {
   return { ...currentWeights };
+}
+
+export function getDefaultWeights(): Weights {
+  return { ...DEFAULT_WEIGHTS };
 }
 
 function watchWeightsFile(): void {
@@ -226,6 +271,10 @@ const rowCountCandlesStmt = db.prepare(
   `SELECT COUNT(*) AS count FROM candles_1m WHERE asset_id = ?`,
 );
 
+const avgCloseSinceStmt = db.prepare(
+  `SELECT AVG(c) AS avg FROM candles_1m WHERE asset_id = ? AND ts >= ?`,
+);
+
 interface CloseTs {
   close: number;
   ts: number;
@@ -248,6 +297,23 @@ function closeAtOrBefore(assetId: number, ts: number): CloseTs | null {
 function hasAnyCandles(assetId: number): boolean {
   const r = rowCountCandlesStmt.get(assetId) as { count: number };
   return r.count > 0;
+}
+
+function avgCloseSince(assetId: number, sinceTs: number): number | null {
+  const r = avgCloseSinceStmt.get(assetId, sinceTs) as { avg: number | null } | undefined;
+  if (!r || r.avg === null || !Number.isFinite(r.avg) || r.avg <= 0) return null;
+  return r.avg;
+}
+
+// ─── api key presence ────────────────────────────────────────────────
+
+const apiKeyPresentStmt = db.prepare(
+  `SELECT 1 AS present FROM api_keys WHERE service = ? LIMIT 1`,
+);
+
+function hasApiKey(service: string): boolean {
+  const r = apiKeyPresentStmt.get(service) as { present: number } | undefined;
+  return r !== undefined;
 }
 
 // ─── whale netflow ────────────────────────────────────────────────────
@@ -393,7 +459,7 @@ function newsSentimentAggregate(
 
 // ─── signal builders ──────────────────────────────────────────────────
 
-function sFearGreedLevel(now: number): SignalReading | null {
+function sFearGreedLevel(_now: number): SignalReading | null {
   const r = latestIndicator('fng_crypto');
   if (!r) return null;
   // Extreme fear (v=0) → +1 bullish contrarian; Extreme greed (v=100) → -1.
@@ -439,7 +505,7 @@ function sDxyTrend(now: number): SignalReading | null {
   };
 }
 
-function sVixLevel(now: number): SignalReading | null {
+function sVixLevel(_now: number): SignalReading | null {
   const r = latestIndicator('vix');
   if (!r) return null;
   // High VIX → bearish. Normalize around 20.
@@ -508,6 +574,10 @@ function sWhaleNetflow(
 ): SignalReading | null {
   const chain = symbolToChain(symbol);
   if (!chain) return null;
+  // If the chain API key isn't configured, we have no whale data → null rather
+  // than emitting a misleading neutral 0. BTC uses Blockstream (no key needed).
+  if (chain === 'eth' && !hasApiKey('etherscan')) return null;
+  if (chain === 'sol' && !hasApiKey('helius')) return null;
   const net = whaleNetflowUsd(chain, ignoreSet, now);
   const valueNormalized = clamp(-Math.tanh(net / 10_000_000), -1, 1);
   return {
@@ -547,6 +617,22 @@ function sPriceMomentum1h(assetId: number, now: number): SignalReading | null {
   };
 }
 
+function sPriceMomentum4h(assetId: number, now: number): SignalReading | null {
+  const nowClose = latestClose(assetId);
+  if (!nowClose) return null;
+  const prior = closeAtOrBefore(assetId, now - 14_400);
+  if (!prior || prior.close === 0) return null;
+  const pct = ((nowClose.close - prior.close) / prior.close) * 100;
+  const valueNormalized = clamp(Math.tanh(pct * 3), -1, 1);
+  return {
+    name: 'price_momentum_4h',
+    valueNormalized,
+    weight: currentWeights.price_momentum_4h,
+    rawValue: pct,
+    asOf: nowClose.ts,
+  };
+}
+
 function sPriceMomentum24h(assetId: number, now: number): SignalReading | null {
   const nowClose = latestClose(assetId);
   if (!nowClose) return null;
@@ -560,6 +646,103 @@ function sPriceMomentum24h(assetId: number, now: number): SignalReading | null {
     weight: currentWeights.price_momentum_24h,
     rawValue: pct,
     asOf: nowClose.ts,
+  };
+}
+
+function sRsi14(symbol: string): SignalReading | null {
+  const r = latestIndicator(`rsi14_${symbol}`);
+  if (!r) return null;
+  // Contrarian: RSI > 70 → bearish; RSI < 30 → bullish. Map 50 → 0.
+  const valueNormalized = clamp((50 - r.value) / 50, -1, 1);
+  return {
+    name: 'rsi_14',
+    valueNormalized,
+    weight: currentWeights.rsi_14,
+    rawValue: r.value,
+    asOf: r.ts,
+  };
+}
+
+function sMacdHistogram(
+  assetId: number,
+  symbol: string,
+  now: number,
+): SignalReading | null {
+  const r = latestIndicator(`macd_hist_${symbol}`);
+  if (!r) return null;
+  const avg = avgCloseSince(assetId, now - 86_400);
+  if (avg === null) return null;
+  // Scale-invariant: hist / avgClose * 1000 → roughly unit-scale, then tanh.
+  const valueNormalized = clamp(Math.tanh((r.value / avg) * 1000), -1, 1);
+  return {
+    name: 'macd_histogram',
+    valueNormalized,
+    weight: currentWeights.macd_histogram,
+    rawValue: r.value,
+    asOf: r.ts,
+  };
+}
+
+function sMacdLine(
+  assetId: number,
+  symbol: string,
+  now: number,
+): SignalReading | null {
+  const r = latestIndicator(`macd_${symbol}`);
+  if (!r) return null;
+  const avg = avgCloseSince(assetId, now - 86_400);
+  if (avg === null) return null;
+  const valueNormalized = clamp(Math.tanh((r.value / avg) * 200), -1, 1);
+  return {
+    name: 'macd_line',
+    valueNormalized,
+    weight: currentWeights.macd_line,
+    rawValue: r.value,
+    asOf: r.ts,
+  };
+}
+
+function sEma20Slope4h(
+  assetId: number,
+  symbol: string,
+  now: number,
+): SignalReading | null {
+  // ~4h of 1m readings.
+  const points = indicatorSince(`ema20_${symbol}`, now - 14_400);
+  if (points.length < 10) return null;
+  const slope = linregSlopePerDay(points);
+  if (slope === null) return null;
+  const avg = avgCloseSince(assetId, now - 14_400);
+  if (avg === null) return null;
+  // slope is value/day. Normalize vs avg price: tanh((slope/avg)*100).
+  const valueNormalized = clamp(Math.tanh((slope / avg) * 100), -1, 1);
+  return {
+    name: 'ema20_slope_4h',
+    valueNormalized,
+    weight: currentWeights.ema20_slope_4h,
+    rawValue: slope,
+    asOf: points[points.length - 1]!.ts,
+  };
+}
+
+function sEma200Distance(
+  assetId: number,
+  symbol: string,
+  _now: number,
+): SignalReading | null {
+  const ema = latestIndicator(`ema200_${symbol}`);
+  if (!ema || ema.value <= 0) return null;
+  const close = latestClose(assetId);
+  if (!close) return null;
+  const pct = (close.close - ema.value) / ema.value;
+  // Positive pct = above EMA200 (bullish).
+  const valueNormalized = clamp(Math.tanh(pct * 10), -1, 1);
+  return {
+    name: 'ema200_distance',
+    valueNormalized,
+    weight: currentWeights.ema200_distance,
+    rawValue: pct,
+    asOf: Math.min(ema.ts, close.ts),
   };
 }
 
@@ -582,6 +765,55 @@ const enabledAssetsStmt = db.prepare(
      WHERE enabled = 1 AND type = 'crypto'`,
 );
 
+function buildSignal(
+  name: SignalName,
+  asset: AssetRow,
+  ignoreSet: Set<string>,
+  now: number,
+): SignalReading | null {
+  switch (name) {
+    case 'fear_greed_level':
+      return sFearGreedLevel(now);
+    case 'fear_greed_delta':
+      return sFearGreedDelta(now);
+    case 'dxy_trend':
+      return sDxyTrend(now);
+    case 'vix_level':
+      return sVixLevel(now);
+    case 'funding_rate':
+      return sFundingRate(asset.symbol);
+    case 'open_interest_delta':
+      return sOpenInterestDelta(asset.symbol, now);
+    case 'btc_dominance_trend':
+      return sBtcDominanceTrend(asset.symbol, now);
+    case 'whale_netflow_to_exchanges':
+      return sWhaleNetflow(asset.symbol, ignoreSet, now);
+    case 'news_sentiment_aggregate':
+      return sNewsSentiment(asset.symbol, now);
+    case 'price_momentum_1h':
+      return sPriceMomentum1h(asset.id, now);
+    case 'price_momentum_4h':
+      return sPriceMomentum4h(asset.id, now);
+    case 'price_momentum_24h':
+      return sPriceMomentum24h(asset.id, now);
+    case 'rsi_14':
+      return sRsi14(asset.symbol);
+    case 'macd_histogram':
+      return sMacdHistogram(asset.id, asset.symbol, now);
+    case 'macd_line':
+      return sMacdLine(asset.id, asset.symbol, now);
+    case 'ema20_slope_4h':
+      return sEma20Slope4h(asset.id, asset.symbol, now);
+    case 'ema200_distance':
+      return sEma200Distance(asset.id, asset.symbol, now);
+    default: {
+      // Exhaustiveness guard.
+      const _exhaustive: never = name;
+      return _exhaustive;
+    }
+  }
+}
+
 function scoreAsset(
   asset: AssetRow,
   horizon: Horizon,
@@ -592,21 +824,10 @@ function scoreAsset(
   if (!hasAnyCandles(asset.id)) return;
 
   const signals: SignalReading[] = [];
-  const pushIf = (s: SignalReading | null): void => {
+  for (const name of HORIZON_SIGNALS[horizon]) {
+    const s = buildSignal(name, asset, ignoreSet, now);
     if (s) signals.push(s);
-  };
-
-  pushIf(sFearGreedLevel(now));
-  pushIf(sFearGreedDelta(now));
-  pushIf(sDxyTrend(now));
-  pushIf(sVixLevel(now));
-  pushIf(sFundingRate(asset.symbol));
-  pushIf(sOpenInterestDelta(asset.symbol, now));
-  pushIf(sBtcDominanceTrend(asset.symbol, now));
-  pushIf(sWhaleNetflow(asset.symbol, ignoreSet, now));
-  pushIf(sNewsSentiment(asset.symbol, now));
-  pushIf(sPriceMomentum1h(asset.id, now));
-  pushIf(sPriceMomentum24h(asset.id, now));
+  }
 
   if (signals.length === 0) return;
 

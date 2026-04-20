@@ -58,6 +58,7 @@ export function NonCryptoLayout({
                 assetId={activeAsset}
                 timeframe={timeframe}
                 height={480}
+                symbol={selected?.symbol}
               />
             ) : (
               <div className="h-full flex items-center justify-center text-text-dim vt-font text-lg">

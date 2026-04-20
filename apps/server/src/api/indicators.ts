@@ -16,6 +16,16 @@ const seriesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(5000).optional(),
 });
 
+const historyQuerySchema = z.object({
+  name: z.string().min(1).max(100),
+  limit: z.coerce.number().int().min(1).max(2000).default(500),
+});
+
+const historyStmt = db.prepare(
+  `SELECT ts, value FROM indicator_readings
+    WHERE name = ? ORDER BY ts DESC LIMIT ?`,
+);
+
 interface ReadingRow {
   id: number;
   name: string;
@@ -38,6 +48,19 @@ function parseMeta(s: string | null): Record<string, unknown> | null {
 }
 
 export async function registerIndicatorsRoutes(app: FastifyInstance): Promise<void> {
+  // GET /api/indicators/history?name=<string>&limit=<int>
+  //   chart-overlay-friendly shape: { points: [{ ts, value }, ...] } ascending.
+  app.get('/history', async (req, reply) => {
+    const parsed = historyQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid query', issues: parsed.error.issues });
+    }
+    const { name, limit } = parsed.data;
+    const rowsDesc = historyStmt.all(name, limit) as Array<{ ts: number; value: number }>;
+    const points = rowsDesc.slice().reverse();
+    return { points };
+  });
+
   // GET /api/indicators — latest row per name
   app.get('/', async () => {
     const rows = db

@@ -42,7 +42,7 @@ export default function CryptoTradingPage() {
           </div>
           <div className="flex-1 min-h-0 min-w-0 relative">
             {activeAsset ? (
-              <LightweightChart assetId={activeAsset} timeframe={timeframe} />
+              <LightweightChart assetId={activeAsset} timeframe={timeframe} symbol={selected?.symbol} />
             ) : (
               <div className="h-full flex items-center justify-center text-text-dim vt-font text-lg">
                 Pick a pair from the list.

@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useEventStream } from '@/lib/sse';
 import { useTradingStore, type TradingType } from '@/lib/store';
 
 type AssetKind = 'crypto' | 'stock' | 'commodity' | 'etf';
@@ -45,22 +46,90 @@ interface AssetListProps {
   symbolFilter?: (symbol: string) => boolean;
 }
 
-interface PriceInfo {
-  last: number | null;
-  change24h: number | null;
+interface TradeTickStreamEvent {
+  kind: 'trade_tick';
+  assetId: number;
+  price: number;
 }
 
-function formatPrice(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (Math.abs(n) >= 1) return n.toFixed(2);
-  return n.toFixed(4);
+function isTradeTick(ev: unknown): ev is TradeTickStreamEvent {
+  if (!ev || typeof ev !== 'object') return false;
+  const e = ev as Record<string, unknown>;
+  return (
+    e.kind === 'trade_tick' &&
+    typeof e.assetId === 'number' &&
+    typeof e.price === 'number'
+  );
 }
 
-function formatPct(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  const sign = n >= 0 ? '+' : '';
-  return `${sign}${n.toFixed(2)}%`;
+function pickDecimals(n: number): number {
+  const abs = Math.abs(n);
+  if (abs >= 1000) return 2;
+  if (abs >= 1) return 2;
+  return 4;
+}
+
+function formatPrice(n: number | undefined): string {
+  if (n === undefined || !Number.isFinite(n)) return '—';
+  return n.toFixed(pickDecimals(n));
+}
+
+interface AssetRowProps {
+  asset: Asset;
+  livePrice: number | undefined;
+  active: boolean;
+  onSelect: () => void;
+}
+
+function AssetRow({ asset, livePrice, active, onSelect }: AssetRowProps) {
+  const { data } = useQuery<CandlesResponse>({
+    queryKey: ['asset-list-24h', asset.id],
+    queryFn: () =>
+      api.get<CandlesResponse>(
+        `/api/candles?assetId=${asset.id}&timeframe=1h&limit=24`,
+      ),
+    staleTime: 60_000,
+  });
+
+  const closeAt24hAgo = data?.candles?.[0]?.open ?? null;
+
+  let changeStr = '—';
+  let changeColor = 'text-text-dim';
+  if (
+    livePrice !== undefined &&
+    Number.isFinite(livePrice) &&
+    closeAt24hAgo !== null &&
+    Number.isFinite(closeAt24hAgo) &&
+    closeAt24hAgo !== 0
+  ) {
+    const pct = ((livePrice - closeAt24hAgo) / closeAt24hAgo) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    changeStr = `${sign}${pct.toFixed(2)}%`;
+    changeColor = pct >= 0 ? 'text-neon-green' : 'text-neon-red';
+  }
+
+  const priceStr = formatPrice(livePrice);
+
+  const rowCls = active
+    ? 'px-2 py-1 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated flex items-center justify-between gap-2'
+    : 'px-2 py-1 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated flex items-center justify-between gap-2';
+
+  return (
+    <button type="button" onClick={onSelect} className={rowCls}>
+      <span className="flex flex-col items-start min-w-0">
+        <span className="pixel-font text-[10px] text-text-primary truncate">
+          {asset.symbol}
+        </span>
+        <span className="vt-font text-[14px] text-text-secondary truncate">
+          {asset.displayName}
+        </span>
+      </span>
+      <span className="flex flex-col items-end min-w-0">
+        <span className="vt-font text-[14px] text-text-primary">{priceStr}</span>
+        <span className={`vt-font text-[12px] ${changeColor}`}>{changeStr}</span>
+      </span>
+    </button>
+  );
 }
 
 export function AssetList({
@@ -101,37 +170,17 @@ export function AssetList({
     );
   }, [assetsData, query, symbolFilter]);
 
-  const priceQueries = useQueries({
-    queries: assets.map((a) => ({
-      queryKey: ['asset-price-24h', a.id],
-      queryFn: () =>
-        api.get<CandlesResponse>(
-          `/api/candles?assetId=${a.id}&timeframe=1h&limit=25`,
-        ),
-      staleTime: 30_000,
-      refetchInterval: 30_000,
-    })),
-  });
+  const assetIds = useMemo(() => assets.map((a) => a.id), [assets]);
 
-  const priceMap = useMemo<Record<number, PriceInfo>>(() => {
-    const out: Record<number, PriceInfo> = {};
-    assets.forEach((a, idx) => {
-      const q = priceQueries[idx];
-      const candles = q?.data?.candles ?? [];
-      if (candles.length === 0) {
-        out[a.id] = { last: null, change24h: null };
-        return;
-      }
-      const last = candles[candles.length - 1]?.close ?? null;
-      const ago = candles[0]?.close ?? null;
-      const change =
-        last !== null && ago !== null && ago !== 0
-          ? ((last - ago) / ago) * 100
-          : null;
-      out[a.id] = { last, change24h: change };
-    });
-    return out;
-  }, [assets, priceQueries]);
+  const { lastEvent } = useEventStream(['trade_tick'], { assetIds });
+
+  const [lastPrices, setLastPrices] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    if (!isTradeTick(lastEvent)) return;
+    const { assetId, price } = lastEvent;
+    setLastPrices((prev) => ({ ...prev, [assetId]: price }));
+  }, [lastEvent]);
 
   return (
     <div className="flex flex-col gap-1 p-2 border border-border-dim bg-bg-terminal overflow-y-auto max-h-full min-h-[400px]">
@@ -148,60 +197,21 @@ export function AssetList({
           {assetsData ? 'NO MATCHES' : 'LOADING…'}
         </div>
       ) : (
-        assets.map((a) => {
-          const active = a.id === activeId;
-          const info = priceMap[a.id] ?? { last: null, change24h: null };
-          const changeColor =
-            info.change24h === null
-              ? 'text-text-dim'
-              : info.change24h >= 0
-                ? 'text-neon-green'
-                : 'text-neon-red';
-          const priceBase = 'vt-font text-[14px]';
-          const priceColor =
-            info.change24h === null
-              ? 'text-text-primary'
-              : Math.abs(info.change24h) >= 5
-                ? 'text-neon-cyan'
-                : info.change24h >= 0
-                  ? 'text-neon-green'
-                  : 'text-neon-red';
-          const rowCls = active
-            ? 'px-2 py-1 cursor-pointer border-l-2 border-neon-cyan bg-bg-elevated flex items-center justify-between gap-2'
-            : 'px-2 py-1 cursor-pointer border-l-2 border-transparent hover:border-neon-cyan hover:bg-bg-elevated flex items-center justify-between gap-2';
-
-          return (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() =>
-                setSelectedAsset(tradingType, {
-                  id: a.id,
-                  symbol: a.symbol,
-                  displayName: a.displayName,
-                })
-              }
-              className={rowCls}
-            >
-              <span className="flex flex-col items-start min-w-0">
-                <span className="pixel-font text-[10px] text-text-primary truncate">
-                  {a.symbol}
-                </span>
-                <span className="vt-font text-[14px] text-text-secondary truncate">
-                  {a.displayName}
-                </span>
-              </span>
-              <span className="flex flex-col items-end min-w-0">
-                <span className={`${priceBase} ${priceColor}`}>
-                  {formatPrice(info.last)}
-                </span>
-                <span className={`vt-font text-[12px] ${changeColor}`}>
-                  {formatPct(info.change24h)}
-                </span>
-              </span>
-            </button>
-          );
-        })
+        assets.map((a) => (
+          <AssetRow
+            key={a.id}
+            asset={a}
+            livePrice={lastPrices[a.id]}
+            active={a.id === activeId}
+            onSelect={() =>
+              setSelectedAsset(tradingType, {
+                id: a.id,
+                symbol: a.symbol,
+                displayName: a.displayName,
+              })
+            }
+          />
+        ))
       )}
     </div>
   );

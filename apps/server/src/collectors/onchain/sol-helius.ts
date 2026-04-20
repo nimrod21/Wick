@@ -22,7 +22,7 @@ import { nowSec } from '../../util/time.js';
 import { scheduleSnapshot } from '../../core/snapshot-job.js';
 
 const BASE_URL = 'https://api.helius.xyz/v0';
-const TICK_CRON = '*/1 * * * *';
+const TICK_CRON = '*/2 * * * *';
 const SIGNIFICANCE_USD = 500_000;
 const TOKEN_PRICE_TTL_MS = 10 * 60 * 1000;
 const NEG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -367,7 +367,12 @@ async function pollOne(row: WhaleRow): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  if (!apiKey || stopping) return;
+  if (stopping) return;
+  // Hot-reload: re-read the key every tick so pasting via Settings takes effect
+  // within one cron cycle without a server restart.
+  const creds = getApiKey('helius');
+  apiKey = creds?.key ?? null;
+  if (!apiKey) return; // silently skip this tick — no key yet
   const rows = selectEnabledStmt.all() as WhaleRow[];
   for (const row of rows) {
     if (stopping) return;
@@ -381,16 +386,15 @@ async function tick(): Promise<void> {
 
 export function startHelius(): void {
   stopping = false;
+  // Schedule the cron unconditionally; tick() re-reads the key each run so
+  // Settings-paste takes effect without a restart.
   const creds = getApiKey('helius');
-  if (!creds || !creds.key) {
-    logger.warn(
-      'helius: no API key configured — SOL whale collector degraded (public RPC fallback deferred)',
-    );
-    apiKey = null;
-    return;
+  apiKey = creds?.key ?? null;
+  if (apiKey) {
+    logger.info('helius whale collector enabled');
+  } else {
+    logger.info('helius: no API key yet — cron scheduled, will activate on Settings save');
   }
-  apiKey = creds.key;
-  logger.info('helius whale collector enabled');
   if (task) return;
   task = cron.schedule(TICK_CRON, () => {
     if (currentTick) return;

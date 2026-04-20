@@ -9,5 +9,11 @@
   "whale_netflow_to_exchanges":  0.9,
   "news_sentiment_aggregate":    0.7,
   "price_momentum_1h":           0.6,
-  "price_momentum_24h":          0.4
+  "price_momentum_4h":           0.5,
+  "price_momentum_24h":          0.4,
+  "rsi_14":                      0.6,
+  "macd_histogram":              0.7,
+  "macd_line":                   0.4,
+  "ema20_slope_4h":              0.5,
+  "ema200_distance":             0.5
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
 
@@ -21,16 +21,22 @@ interface ProbResponse {
   score: ProbScore | null;
 }
 
-interface SignalRow {
+interface ContributingSignal {
   name: string;
   valueNormalized: number;
   weight: number;
   asOf: number;
 }
 
-interface SignalsResponse {
-  score: { ts: number; bullishProb: number; confidence: number } | null;
-  signals: SignalRow[];
+interface HistoryRow {
+  ts: number;
+  bullishProb: number;
+  confidence: number;
+  contributing: ContributingSignal[];
+}
+
+interface HistoryResponse {
+  rows: HistoryRow[];
 }
 
 interface Asset {
@@ -61,9 +67,14 @@ function probTextColor(p: number): string {
   return 'text-neon-amber';
 }
 
+const HORIZON_COLOR: Record<Horizon, { text: string; border: string; glow: string }> = {
+  '1h': { text: 'text-neon-cyan', border: 'border-neon-cyan', glow: 'shadow-[0_0_8px_var(--neon-cyan)]' },
+  '4h': { text: 'text-neon-purple', border: 'border-neon-purple', glow: 'shadow-[0_0_8px_var(--neon-purple)]' },
+  '24h': { text: 'text-neon-amber', border: 'border-neon-amber', glow: 'shadow-[0_0_8px_var(--neon-amber)]' },
+};
+
 function Bar({ horizon, score }: { horizon: Horizon; score: ProbScore | null }) {
   const p = score?.bullishProb ?? null;
-  const conf = score?.confidence ?? null;
   const pct = p !== null ? Math.round(p * 100) : 0;
   return (
     <div className="flex items-center gap-3">
@@ -87,43 +98,146 @@ function Bar({ horizon, score }: { horizon: Horizon; score: ProbScore | null }) 
   );
 }
 
-function ConfidenceRow({ score }: { score: ProbScore | null }) {
+function AgreementRow({ score }: { score: ProbScore | null }) {
   const conf = score?.confidence ?? null;
   if (conf === null) return null;
   return (
     <span className="pixel-font text-[8px] text-text-dim uppercase tracking-wider">
-      conf {Math.round(conf * 100)}%
+      agreement {Math.round(conf * 100)}%
     </span>
   );
 }
 
-function SignalsModal({
+function formatSignalName(name: string): string {
+  return name.replace(/_/g, ' ').toUpperCase();
+}
+
+function SignalRow({ s }: { s: ContributingSignal }) {
+  const pct = Math.round(s.valueNormalized * 100);
+  const color = probTextColor(0.5 + s.valueNormalized / 2);
+  const barColor = probColor(0.5 + s.valueNormalized / 2);
+  const width = Math.abs(pct);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="pixel-font text-[9px] text-text-secondary uppercase tracking-wider break-all">
+          {formatSignalName(s.name)}
+        </span>
+        <span className="pixel-font text-[8px] text-text-dim shrink-0 tabular-nums">
+          w {s.weight.toFixed(1)}
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-3 bg-bg-void border border-border-dim relative">
+          <div
+            className={`absolute top-0 h-full ${barColor}`}
+            style={{
+              width: `${width / 2}%`,
+              left: s.valueNormalized >= 0 ? '50%' : `${50 - width / 2}%`,
+            }}
+          />
+          <div className="absolute left-1/2 top-0 h-full w-px bg-border-dim" />
+        </div>
+        <span
+          className={`vt-font text-base w-14 text-right shrink-0 tabular-nums ${color}`}
+        >
+          {pct > 0 ? `+${pct}` : pct}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HorizonSection({
+  horizon,
+  data,
+  isLoading,
+}: {
+  horizon: Horizon;
+  data: HistoryResponse | undefined;
+  isLoading: boolean;
+}) {
+  const row = data?.rows?.[0] ?? null;
+  const palette = HORIZON_COLOR[horizon];
+  const probPct = row ? Math.round(row.bullishProb * 100) : null;
+  const confPct = row ? Math.round(row.confidence * 100) : null;
+  const probTextCls = row ? probTextColor(row.bullishProb) : 'text-text-dim';
+
+  return (
+    <section className={`border ${palette.border} ${palette.glow} bg-bg-void/40 p-4`}>
+      <header className="flex items-baseline justify-between mb-3">
+        <span className={`pixel-font text-[12px] ${palette.text} glow`}>
+          {horizon.toUpperCase()}
+        </span>
+        <div className="flex items-baseline gap-4">
+          <span className="pixel-font text-[8px] text-text-dim uppercase tracking-wider">
+            BULLISH{' '}
+            <span className={`vt-font text-lg ${probTextCls}`}>
+              {probPct !== null ? `${probPct}%` : '—'}
+            </span>
+          </span>
+          <span className="pixel-font text-[8px] text-text-dim uppercase tracking-wider">
+            AGREEMENT{' '}
+            <span className="vt-font text-lg text-text-secondary">
+              {confPct !== null ? `${confPct}%` : '—'}
+            </span>
+          </span>
+        </div>
+      </header>
+      {isLoading && !row ? (
+        <div className="vt-font text-neon-cyan glow text-sm">LOADING…</div>
+      ) : !row || row.contributing.length === 0 ? (
+        <div className="vt-font text-text-dim text-sm">
+          No signals yet for this horizon.
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {row.contributing.map((s) => (
+            <SignalRow key={s.name} s={s} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SignalsDrawer({
   asset,
   onClose,
 }: {
   asset: Asset;
   onClose: () => void;
 }) {
-  const [horizon, setHorizon] = useState<Horizon>('1h');
-  const { data, isLoading } = useQuery<SignalsResponse>({
-    queryKey: ['prob-signals', asset.id, horizon],
-    queryFn: () =>
-      api.get<SignalsResponse>(
-        `/api/probability/signals?assetId=${asset.id}&horizon=${horizon}`,
-      ),
+  // Esc-to-close.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const results = useQueries({
+    queries: HORIZONS.map((h) => ({
+      queryKey: ['prob-history', asset.id, h, 1] as const,
+      queryFn: (): Promise<HistoryResponse> =>
+        api.get<HistoryResponse>(
+          `/api/probability/history?assetId=${asset.id}&horizon=${h}&limit=1`,
+        ),
+    })),
   });
-  const signals = data?.signals ?? [];
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={onClose}
+      role="presentation"
     >
       <div
-        className="w-full max-w-3xl bg-bg-terminal border-2 border-neon-purple shadow-[0_0_20px_var(--neon-purple)]"
+        className="w-full max-w-3xl max-h-[90vh] overflow-y-auto bg-bg-terminal border-2 border-border-dim shadow-[0_0_20px_var(--neon-purple)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-dim">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-dim sticky top-0 bg-bg-terminal z-10">
           <div className="flex items-baseline gap-3">
             <span className="pixel-font text-[11px] text-neon-purple glow">
               {asset.symbol} SIGNALS
@@ -134,72 +248,22 @@ function SignalsModal({
           </div>
           <button
             type="button"
+            aria-label="Close"
             className="pixel-font text-[10px] text-text-secondary hover:text-neon-red px-3 py-1 border border-border-dim"
             onClick={onClose}
           >
             X
           </button>
         </div>
-        <div className="flex gap-2 px-5 py-3 border-b border-border-dim">
-          {HORIZONS.map((h) => (
-            <button
-              type="button"
+        <div className="p-5 space-y-5">
+          {HORIZONS.map((h, i) => (
+            <HorizonSection
               key={h}
-              className={`pixel-font text-[9px] px-3 py-1 border ${
-                horizon === h
-                  ? 'border-neon-purple text-neon-purple glow'
-                  : 'border-border-dim text-text-secondary hover:text-neon-cyan'
-              }`}
-              onClick={() => setHorizon(h)}
-            >
-              {h.toUpperCase()}
-            </button>
+              horizon={h}
+              data={results[i]!.data}
+              isLoading={results[i]!.isLoading}
+            />
           ))}
-        </div>
-        <div className="p-5 space-y-3">
-          {isLoading ? (
-            <div className="vt-font text-neon-cyan glow">LOADING…</div>
-          ) : signals.length === 0 ? (
-            <div className="vt-font text-text-dim">
-              No signals yet. Probability engine may still be warming up.
-            </div>
-          ) : (
-            signals.map((s) => {
-              const pct = Math.round(s.valueNormalized * 100);
-              const color = probTextColor(0.5 + s.valueNormalized / 2);
-              const barColor = probColor(0.5 + s.valueNormalized / 2);
-              const width = Math.abs(pct);
-              return (
-                <div key={s.name} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="pixel-font text-[9px] text-text-secondary uppercase tracking-wider break-all">
-                      {s.name.replace(/_/g, ' ')}
-                    </span>
-                    <span className="pixel-font text-[8px] text-text-dim shrink-0 tabular-nums">
-                      w {s.weight.toFixed(1)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-3 bg-bg-void border border-border-dim relative">
-                      <div
-                        className={`absolute top-0 h-full ${barColor}`}
-                        style={{
-                          width: `${width / 2}%`,
-                          left: s.valueNormalized >= 0 ? '50%' : `${50 - width / 2}%`,
-                        }}
-                      />
-                      <div className="absolute left-1/2 top-0 h-full w-px bg-border-dim" />
-                    </div>
-                    <span
-                      className={`vt-font text-base w-14 text-right shrink-0 tabular-nums ${color}`}
-                    >
-                      {pct > 0 ? `+${pct}` : pct}
-                    </span>
-                  </div>
-                </div>
-              );
-            })
-          )}
         </div>
       </div>
     </div>
@@ -208,7 +272,7 @@ function SignalsModal({
 
 export function ProbabilityCard({ asset }: { asset: Asset }) {
   const qc = useQueryClient();
-  const [modalOpen, setModalOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const q1h = useQuery<ProbResponse>({
     queryKey: ['prob-latest', asset.id, '1h'],
@@ -254,7 +318,7 @@ export function ProbabilityCard({ asset }: { asset: Asset }) {
     <>
       <button
         type="button"
-        onClick={() => setModalOpen(true)}
+        onClick={() => setDrawerOpen(true)}
         className="block w-full text-left bg-bg-terminal border-2 border-border-dim hover:border-neon-purple p-4 transition-colors"
       >
         <div className="flex items-baseline justify-between mb-1">
@@ -262,7 +326,7 @@ export function ProbabilityCard({ asset }: { asset: Asset }) {
           <span className="vt-font text-base text-text-secondary">{asset.displayName}</span>
         </div>
         <div className="mb-3 h-4">
-          <ConfidenceRow
+          <AgreementRow
             score={q1h.data?.score ?? q4h.data?.score ?? q24h.data?.score ?? null}
           />
         </div>
@@ -272,8 +336,8 @@ export function ProbabilityCard({ asset }: { asset: Asset }) {
           <Bar horizon="24h" score={q24h.data?.score ?? null} />
         </div>
       </button>
-      {modalOpen ? (
-        <SignalsModal asset={asset} onClose={() => setModalOpen(false)} />
+      {drawerOpen ? (
+        <SignalsDrawer asset={asset} onClose={() => setDrawerOpen(false)} />
       ) : null}
     </>
   );

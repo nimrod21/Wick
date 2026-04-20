@@ -1,17 +1,24 @@
 /**
- * DXY + VIX collector via yahoo-finance2.
+ * DXY + VIX collector.
  *
- * Polls every 5 minutes during US equity hours (VIX is only quoted while
- * CBOE is open; DXY mirrors US equities for this purpose). On first run,
- * pulls 1y daily history to seed the mini chart + drawer history.
+ * Primary: yahoo-finance2 (free, no key). Fallback: Twelve Data (keyed) when
+ * Yahoo returns null/undefined or throws. Polls every 5 minutes during US
+ * equity hours (VIX is only quoted while CBOE is open; DXY mirrors US
+ * equities for this purpose). On first run, pulls 1y daily history from
+ * Yahoo to seed the mini chart + drawer history.
  *
- * Yahoo symbol quirks: `^VIX` needs the caret, `DX-Y.NYB` needs the suffix.
- * Any typo = silent empty response.
+ * Yahoo symbol quirks: `^VIX` needs the caret, `DX=F` is the DXY futures
+ * continuous contract. Any typo = silent empty response.
+ *
+ * Twelve Data fallback: uses symbols `VIX` (index) and `DXY` (index). If
+ * the Twelve Data API key is missing AND Yahoo also fails, we log a warning
+ * and skip without inserting.
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
-import yf from 'yahoo-finance2';
+import yahooFinance from 'yahoo-finance2';
 import type { IndicatorEvent } from '@cockpit/shared';
+import { getApiKey } from '../../config.js';
 import { db } from '../../db/client.js';
 import { eventBus } from '../../core/event-bus.js';
 import { logger } from '../../util/logger.js';
@@ -19,16 +26,18 @@ import { nowSec } from '../../util/time.js';
 import { isMarketOpen } from '../../util/market-hours.js';
 
 const TICK_CRON = '*/5 * * * *';
+const TWELVE_DATA_BASE = 'https://api.twelvedata.com';
 
 interface IndicatorDef {
   name: string;
   yahooSymbol: string;
+  twelveDataSymbol: string;
   display: string;
 }
 
 const INDICATORS: readonly IndicatorDef[] = [
-  { name: 'vix', yahooSymbol: '^VIX', display: 'VIX' },
-  { name: 'dxy', yahooSymbol: 'DX-Y.NYB', display: 'DXY' },
+  { name: 'vix', yahooSymbol: '^VIX', twelveDataSymbol: 'VIX', display: 'VIX' },
+  { name: 'dxy', yahooSymbol: 'DX=F', twelveDataSymbol: 'DXY', display: 'DXY' },
 ];
 
 let task: ScheduledTask | null = null;
@@ -64,7 +73,7 @@ function initialize(): void {
   if (initialized) return;
   initialized = true;
   try {
-    (yf as { suppressNotices?: (names: string[]) => void }).suppressNotices?.([
+    (yahooFinance as { suppressNotices?: (names: string[]) => void }).suppressNotices?.([
       'yahooSurvey',
     ]);
   } catch {
@@ -79,12 +88,65 @@ interface YahooQuote {
 
 async function fetchQuote(symbol: string): Promise<YahooQuote | null> {
   try {
-    const client = yf as unknown as {
+    const client = yahooFinance as unknown as {
       quote: (s: string) => Promise<YahooQuote>;
     };
-    return await client.quote(symbol);
+    const result = await client.quote(symbol);
+    if (!result || typeof result.regularMarketPrice !== 'number') return null;
+    return result;
   } catch (err) {
     logger.warn({ err, symbol }, 'dxy-vix: quote failed');
+    return null;
+  }
+}
+
+interface TwelveDataQuote {
+  datetime?: string;
+  timestamp?: number;
+  close?: string;
+  price?: string;
+  status?: string;
+  code?: number;
+  message?: string;
+}
+
+async function fetchTwelveDataPrice(
+  symbol: string,
+): Promise<{ price: number; ts: number } | null> {
+  const creds = getApiKey('twelvedata');
+  if (!creds?.key) return null;
+  const url =
+    `${TWELVE_DATA_BASE}/quote` +
+    `?symbol=${encodeURIComponent(symbol)}` +
+    `&apikey=${encodeURIComponent(creds.key)}`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      logger.warn(
+        { symbol, status: resp.status },
+        'dxy-vix: twelvedata fallback http error',
+      );
+      return null;
+    }
+    const json = (await resp.json()) as TwelveDataQuote;
+    if (json.status === 'error') {
+      logger.warn(
+        { symbol, code: json.code, message: json.message },
+        'dxy-vix: twelvedata fallback api error',
+      );
+      return null;
+    }
+    const raw = json.close ?? json.price;
+    if (!raw) return null;
+    const price = Number(raw);
+    if (!Number.isFinite(price)) return null;
+    const ts =
+      typeof json.timestamp === 'number' && json.timestamp > 0
+        ? json.timestamp
+        : nowSec();
+    return { price, ts };
+  } catch (err) {
+    logger.warn({ err, symbol }, 'dxy-vix: twelvedata fallback fetch failed');
     return null;
   }
 }
@@ -96,7 +158,7 @@ interface HistoricalRow {
 
 async function fetchHistorical(symbol: string): Promise<HistoricalRow[]> {
   try {
-    const client = yf as unknown as {
+    const client = yahooFinance as unknown as {
       historical: (
         s: string,
         opts: { period1: Date; interval: '1d' | '1wk' | '1mo' },
@@ -140,12 +202,32 @@ async function backfillIndicator(def: IndicatorDef): Promise<void> {
 }
 
 async function pollIndicator(def: IndicatorDef): Promise<void> {
-  const quote = await fetchQuote(def.yahooSymbol);
-  if (!quote || typeof quote.regularMarketPrice !== 'number') return;
-  const price = quote.regularMarketPrice;
-  if (!Number.isFinite(price)) return;
+  // 1) Try Yahoo first.
+  let price: number | null = null;
+  let ts = 0;
+  let source: 'yahoo' | 'twelvedata' = 'yahoo';
 
-  const ts = quoteTsSec(quote);
+  const quote = await fetchQuote(def.yahooSymbol);
+  if (quote && typeof quote.regularMarketPrice === 'number' && Number.isFinite(quote.regularMarketPrice)) {
+    price = quote.regularMarketPrice;
+    ts = quoteTsSec(quote);
+  } else {
+    // 2) Fallback to Twelve Data.
+    const td = await fetchTwelveDataPrice(def.twelveDataSymbol);
+    if (td) {
+      price = td.price;
+      ts = td.ts;
+      source = 'twelvedata';
+    }
+  }
+
+  if (price === null || !Number.isFinite(price)) {
+    // Both providers failed. If Twelve Data key is missing too, the warn from
+    // fetchTwelveDataPrice won't fire — so log a single combined warning here.
+    logger.warn({ name: def.name }, 'dxy-vix: yahoo + twelvedata both unavailable, skipping');
+    return;
+  }
+
   upsertStmt.run(def.name, ts, price, null);
 
   const prev = lastEmittedValue.get(def.name);
@@ -161,7 +243,7 @@ async function pollIndicator(def: IndicatorDef): Promise<void> {
   const evt: IndicatorEvent = {
     id: nextEventId(),
     ts,
-    source: 'yahoo',
+    source,
     kind: 'indicator',
     name: def.name,
     value: price,

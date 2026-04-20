@@ -16,6 +16,7 @@ import type {
   OrderbookEvent,
   OrderbookLevel,
   PriceCandleEvent,
+  Timeframe,
   TradeTickEvent,
 } from '@cockpit/shared';
 import { db } from '../../db/client.js';
@@ -110,6 +111,12 @@ function buildStreamsUrl(assets: CryptoAssetRow[]): string {
   for (const a of assets) {
     const s = a.symbol.toLowerCase();
     streams.push(`${s}@kline_1m`);
+    streams.push(`${s}@kline_3m`);
+    streams.push(`${s}@kline_15m`);
+    streams.push(`${s}@kline_1h`);
+    streams.push(`${s}@kline_4h`);
+    streams.push(`${s}@kline_1d`);
+    streams.push(`${s}@kline_1w`);
     streams.push(`${s}@trade`);
     streams.push(`${s}@depth20@100ms`);
   }
@@ -133,8 +140,8 @@ function handleKline(assetId: AssetId, msg: BinanceKlineMsg): void {
   const c = parseFloat(k.c);
   const v = parseFloat(k.v);
 
-  if (k.x) {
-    // closed candle: persist
+  if (k.x && k.i === '1m') {
+    // closed 1m candle: persist
     try {
       upsert1mStmt.run(assetId, tsSec, o, h, l, c, v);
       lastCandleTsByAsset.set(assetId, tsSec);
@@ -149,7 +156,7 @@ function handleKline(assetId: AssetId, msg: BinanceKlineMsg): void {
     source: 'binance-ws',
     kind: 'candle',
     assetId,
-    timeframe: '1m',
+    timeframe: k.i as Timeframe,
     o,
     h,
     l,

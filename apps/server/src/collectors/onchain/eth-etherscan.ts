@@ -22,7 +22,8 @@ import { logger } from '../../util/logger.js';
 import { nowSec } from '../../util/time.js';
 import { scheduleSnapshot } from '../../core/snapshot-job.js';
 
-const BASE_URL = 'https://api.etherscan.io/api';
+const BASE_URL = 'https://api.etherscan.io/v2/api';
+const CHAIN_ID = '1'; // Ethereum mainnet (V2 API requires chainid on every request)
 const TICK_CRON = '*/1 * * * *'; // every minute
 const BOOTSTRAP_GAP_BLOCKS = 100;
 const SIGNIFICANCE_USD = 500_000;
@@ -134,6 +135,7 @@ function isIgnored(addr: string): boolean {
 async function etherscanGet<T>(params: Record<string, string>): Promise<T | null> {
   if (!apiKey) return null;
   const url = new URL(BASE_URL);
+  url.searchParams.set('chainid', CHAIN_ID);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   url.searchParams.set('apikey', apiKey);
   return limiter.schedule(async () => {
@@ -408,7 +410,12 @@ async function pollOne(row: WhaleRow): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  if (!apiKey || stopping) return;
+  if (stopping) return;
+  // Hot-reload: re-read the key every tick so pasting via Settings takes effect
+  // within one cron cycle without a server restart.
+  const creds = getApiKey('etherscan');
+  apiKey = creds?.key ?? null;
+  if (!apiKey) return; // silently skip this tick — no key yet
   const rows = selectEnabledStmt.all() as WhaleRow[];
   for (const row of rows) {
     if (stopping) return;
@@ -422,14 +429,15 @@ async function tick(): Promise<void> {
 
 export function startEtherscan(): void {
   stopping = false;
+  // Schedule the cron unconditionally; tick() re-reads the key each run so
+  // Settings-paste takes effect without a restart.
   const creds = getApiKey('etherscan');
-  if (!creds || !creds.key) {
-    logger.warn('etherscan: no API key configured — whale collector disabled');
-    apiKey = null;
-    return;
+  apiKey = creds?.key ?? null;
+  if (apiKey) {
+    logger.info('etherscan whale collector enabled');
+  } else {
+    logger.info('etherscan: no API key yet — cron scheduled, will activate on Settings save');
   }
-  apiKey = creds.key;
-  logger.info('etherscan whale collector enabled');
   if (task) return;
   task = cron.schedule(TICK_CRON, () => {
     if (currentTick) return; // skip overlap

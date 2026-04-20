@@ -55,7 +55,13 @@ export function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 h-14 bg-bg-terminal border-b-2 border-border-dim z-10">
       <div className="h-full flex items-center px-6 gap-6">
-        <span className="pixel-font text-[11px] text-neon-cyan glow tracking-widest">COCKPIT</span>
+        <Link
+          href="/"
+          aria-label="Return to dashboard"
+          className="pixel-font text-[12px] text-neon-cyan glow tracking-widest hover:brightness-125 transition-[filter]"
+        >
+          COCKPIT
+        </Link>
         <div className="flex items-center gap-1">
           {TABS.map((tab) => {
             const active = isActive(pathname, tab.href);

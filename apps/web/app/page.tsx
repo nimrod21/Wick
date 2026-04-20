@@ -47,7 +47,7 @@ export default function DashboardPage() {
 
       <TickerTape />
 
-      <div className="grid gap-3 grid-cols-2">
+      <div className="grid gap-3" style={{ gridTemplateColumns: '7fr 3fr' }}>
         <DigestPanel />
         <div className="h-[720px]">
           <EventFirehose />

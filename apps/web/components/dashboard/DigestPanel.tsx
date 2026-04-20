@@ -8,7 +8,7 @@ import { PaperPnL } from '@/components/dashboard/PaperPnL';
 
 function Cell({ children }: { children: ReactNode }) {
   return (
-    <div className="border border-border-dim bg-bg-void/40 p-3 overflow-hidden">
+    <div className="border border-border-dim bg-bg-void/40 p-3 overflow-hidden min-h-0">
       {children}
     </div>
   );
@@ -22,8 +22,11 @@ export function DigestPanel() {
           Digest
         </h2>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        <div className="grid grid-cols-2 gap-3">
+      <div
+        className="flex-1 min-h-0 p-3 grid gap-3"
+        style={{ gridTemplateRows: 'minmax(0, 1fr) minmax(0, 1.2fr)' }}
+      >
+        <div className="grid gap-3 min-h-0 grid-cols-3">
           <Cell>
             <PaperPnL />
           </Cell>
@@ -33,10 +36,10 @@ export function DigestPanel() {
           <Cell>
             <TopWhaleMovers />
           </Cell>
-          <Cell>
-            <HeadlineNews />
-          </Cell>
         </div>
+        <Cell>
+          <HeadlineNews />
+        </Cell>
       </div>
     </div>
   );

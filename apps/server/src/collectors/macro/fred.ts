@@ -135,7 +135,12 @@ async function pollSeries(seriesId: string): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  if (stopping || !apiKey) return;
+  if (stopping) return;
+  // Hot-reload: re-read the key every tick so Settings-paste takes effect
+  // within one cron cycle without a restart.
+  const creds = getApiKey('fred');
+  apiKey = creds?.key ?? null;
+  if (!apiKey) return; // silently skip this tick
   for (const seriesId of SERIES) {
     if (stopping) return;
     try {
@@ -148,16 +153,16 @@ async function tick(): Promise<void> {
 
 export function startFred(): void {
   if (running) return;
+  // Schedule unconditionally; tick() re-reads the key each run.
   const creds = getApiKey('fred');
-  if (!creds || !creds.key) {
-    logger.warn('fred: no API key configured — macro series disabled');
-    apiKey = null;
-    return;
-  }
-  apiKey = creds.key;
+  apiKey = creds?.key ?? null;
   running = true;
   stopping = false;
-  logger.info('fred collector enabled');
+  if (apiKey) {
+    logger.info('fred collector enabled');
+  } else {
+    logger.info('fred: no API key yet — cron scheduled, will activate on Settings save');
+  }
   task = cron.schedule(TICK_CRON, () => {
     void tick().catch((err: unknown) => {
       logger.error({ err }, 'fred tick failed');

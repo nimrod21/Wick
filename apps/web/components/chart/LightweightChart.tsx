@@ -105,6 +105,7 @@ export function LightweightChart({ assetId, timeframe, height }: LightweightChar
         textColor: '#e0e0ff',
         fontFamily: '"VT323", monospace',
         fontSize: 14,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: '#1a2040' },
@@ -195,7 +196,7 @@ export function LightweightChart({ assetId, timeframe, height }: LightweightChar
       return;
     }
 
-    if (ev.kind === 'trade_tick' && timeframe === '1m') {
+    if (ev.kind === 'trade_tick') {
       const t = ev as TradeTickEvent;
       if (t.assetId !== assetId) return;
       const last = lastCandleRef.current;
@@ -216,7 +217,7 @@ export function LightweightChart({ assetId, timeframe, height }: LightweightChar
 
   return (
     <div
-      className="relative w-full h-full overflow-hidden"
+      className="relative w-full h-full overflow-hidden z-[2] bg-bg-terminal isolate"
       style={height !== undefined ? { height } : undefined}
     >
       <div ref={containerRef} className="absolute inset-0" />

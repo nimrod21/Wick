@@ -31,6 +31,7 @@ import {
   startCryptoPanic,
   stopCryptoPanic,
 } from '../collectors/news/cryptopanic.js';
+import { startIndicators, stopIndicators } from '../core/indicators.js';
 
 const tasks: ScheduledTask[] = [];
 let running = false;
@@ -86,6 +87,7 @@ export function startScheduler(): void {
     startFundingOi();
     startBtcDominance();
     startFred();
+    startIndicators();
   } catch (err) {
     logger.error({ err }, 'scheduler: macro collectors failed to start');
   }
@@ -122,6 +124,7 @@ export function stopScheduler(): void {
     stopFundingOi();
     stopBtcDominance();
     stopFred();
+    stopIndicators();
   } catch (err) {
     logger.error({ err }, 'scheduler: macro stop failed');
   }

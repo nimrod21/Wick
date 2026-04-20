@@ -161,10 +161,15 @@ function persistAndEmit(
 
 /**
  * Cron-driven tick. Fetches company-news for every enabled stock if the US
- * equity market is currently open. Silently skips when disabled.
+ * equity market is currently open. Silently skips when disabled. Re-reads
+ * the API key each run so Settings-paste takes effect without a restart.
  */
 export async function finnhubNewsTick(): Promise<void> {
-  if (stopping || !apiKey) return;
+  if (stopping) return;
+  // Hot-reload: re-read the key every tick.
+  const creds = getApiKey('finnhub');
+  apiKey = creds?.key ?? null;
+  if (!apiKey) return; // silently skip this tick
   if (!isMarketOpen('us_equities')) return;
   const stocks = getEnabledStocks();
   for (const s of stocks) {
@@ -190,14 +195,15 @@ export async function finnhubNewsTick(): Promise<void> {
 
 export function startFinnhubNews(): void {
   stopping = false;
+  // Tick re-reads the key each run; just cache the current value for
+  // isFinnhubEnabled() visibility.
   const creds = getApiKey('finnhub');
-  if (!creds || !creds.key) {
-    logger.warn('finnhub: no API key configured — news collector disabled');
-    apiKey = null;
-    return;
+  apiKey = creds?.key ?? null;
+  if (apiKey) {
+    logger.info('finnhub news collector enabled');
+  } else {
+    logger.info('finnhub: no API key yet — scheduler will activate on Settings save');
   }
-  apiKey = creds.key;
-  logger.info('finnhub news collector enabled');
 }
 
 export function stopFinnhubNews(): void {

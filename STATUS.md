@@ -7,7 +7,7 @@
 - [x] Phase 0 — Reset & carve-out
 - [x] Phase 1 — Market data & indicators (this wave; 12h soak + WS-drop heal not yet exercised)
 - [ ] Phase 2 — Paper trading engine
-- [ ] Phase 3 — LLM provider layer
+- [x] Phase 3 — LLM provider layer (keys not yet registered — router skips keyless providers; stub + Ollama are the offline paths)
 - [ ] Phase 4 — Bots + trigger engine
 - [ ] Phase 5 — Learning & memory
 - [ ] Phase 6 — UI
@@ -59,3 +59,34 @@
 ## Blockers
 
 - None.
+
+## Phase 3 notes / decisions (LLM provider layer)
+
+- **No new dependencies.** `zod` was added to `packages/shared/package.json`
+  (required for the Decision contract living in shared per PLAN §7) — same
+  version already in the workspace lockfile via the server, only a link, not
+  a new install.
+- Decision contract: `packages/shared/src/decision.ts` (`DecisionSchema`,
+  `Decision`, `parseDecision`). Coerces "82%"→82, "BUY"→"buy", string
+  numbers, missing optionals→null; buy/sell require symbol+size_pct.
+- Router: `llm/router.ts` `decide(botCtx, snapshot, opts?)` → `{decision,
+  provider, model, latencyMs} | {failed, reason}`; never throws. Providers
+  with no vault key are SKIPPED silently (no error rows) until Luka
+  registers keys — Ollama (authStyle 'none') and the stub need none.
+  Malformed-after-repair marks an `llm_usage` error (PLAN §7 rule 2).
+- Gemini adapter always folds system into the first user turn (some free
+  models reject system role — deterministic beats conditional).
+- Quota: `llm/quota.ts` — llm_usage-backed UTC daily counters + in-memory
+  rpm token bucket; `poolRemaining()` ready for the Phase-4 budget gate.
+- Snapshot builder `llm/snapshot.ts`: `buildSnapshot(symbol, botState?)`;
+  bot-less callers get placeholder account/lessons, weights 1.0 / hit-rate
+  n/a until Phase 5.
+- CLI: `pnpm ask --symbol BTCUSDT [--provider groq|stub] [--dry]`,
+  `pnpm keys set llm.<provider>.key <value>` / `pnpm keys list` (writes the
+  same `apikey.<provider>` vault rows `config.getApiKey()` reads).
+- Tests: `pnpm tsx scripts/test-llm.ts` — 20 asserts (rotation, quota
+  rollover, parse/repair/fail-over, coercion, golden prompt). Golden file:
+  `apps/server/src/llm/golden/prompt.golden.txt` (regen `UPDATE_GOLDEN=1`).
+- Provider signup/setup doc: `apps/server/src/llm/README-setup.md`.
+- Ollama was NOT running during this phase's verification — end-to-end ran
+  via the stub adapter; `ask` probes :11434 each run and auto-enables it.

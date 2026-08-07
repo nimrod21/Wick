@@ -15,14 +15,19 @@ import { logger } from './util/logger.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { buildServer } from './api/server.js';
-// ── Phase 1 rewires this: collectors + scheduler stay imported-but-off ──
-// import {
-//   backfillHistorical,
-//   startAggregationCron,
-//   stopAggregationCron,
-// } from './collectors/crypto/binance-rest.js';
-// import { startBinanceWs, stopBinanceWs } from './collectors/crypto/binance-ws.js';
-// import { startScheduler, stopScheduler } from './jobs/scheduler.js';
+import { backfillAll } from './collectors/crypto/binance-rest.js';
+import {
+  flushKlineBuffer,
+  startBinanceWs,
+  stopBinanceWs,
+} from './collectors/crypto/binance-ws.js';
+import {
+  computeAll,
+  startIndicatorEngine,
+  stopIndicatorEngine,
+} from './market/indicator-engine.js';
+import { setMarketWarm } from './market/market-state.js';
+import { startScheduler, stopScheduler } from './jobs/scheduler.js';
 
 function ensureMasterKey(): void {
   if (config.masterKey && config.masterKey.length >= 32) return;
@@ -75,16 +80,32 @@ async function main(): Promise<void> {
     'wick server listening',
   );
 
-  // 5. Collectors — DISABLED in Phase 0. Phase 1 re-enables:
-  //    - void backfillHistorical() then one-shot aggregation + marketWarm flag
-  //    - startAggregationCron()
-  //    - await startBinanceWs()
-  //    - startScheduler()  (fear-greed, funding-oi, indicator engine)
+  // 5. Market data pipeline (Phase 1).
+  //    Scheduler first: funding + fear-greed initial polls kick off async so
+  //    the boot indicator pass usually has both. Then WS (buffers closed
+  //    klines), then REST backfill; on completion flush the buffer, flip
+  //    marketWarm, and run one full indicator pass so /api/market/indicators
+  //    answers immediately.
+  startScheduler();
+  await startBinanceWs();
+  void (async () => {
+    try {
+      await backfillAll();
+      flushKlineBuffer();
+      setMarketWarm();
+      startIndicatorEngine();
+      computeAll();
+    } catch (err) {
+      logger.error({ err }, 'market warm-up failed');
+    }
+  })();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
-      // Phase 1 rewires this: stopScheduler(); stopAggregationCron(); await stopBinanceWs();
+      stopScheduler();
+      stopIndicatorEngine();
+      await stopBinanceWs();
       await app.close();
       db.close();
     } catch (err) {

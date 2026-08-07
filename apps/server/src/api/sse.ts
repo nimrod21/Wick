@@ -1,14 +1,23 @@
+/**
+ * SSE stream at /api/sse. Emits every bus event kind (tick, candle,
+ * indicator, funding, fear_greed, market_warm, ...) as its own SSE event
+ * name. Ticks are throttled to ≤2/s per symbol per connection; all other
+ * kinds pass through unthrottled.
+ *
+ * Query params: ?topics=tick,candle&symbols=BTCUSDT,ETHUSDT (both optional).
+ */
+
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { VALID_EVENT_KINDS, type Event, type EventKind } from '@wick/shared';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';
 
-const VALID_KINDS: readonly EventKind[] = VALID_EVENT_KINDS;
+const TICK_MIN_INTERVAL_MS = 500; // ≤2 ticks/s per symbol
 
 const querySchema = z.object({
   topics: z.string().optional(),
-  assetIds: z.string().optional(),
+  symbols: z.string().optional(),
 });
 
 function parseList(raw: string | undefined): string[] | null {
@@ -17,19 +26,8 @@ function parseList(raw: string | undefined): string[] | null {
   return parts.length ? parts : null;
 }
 
-function parseIdList(raw: string | undefined): Set<number> | null {
-  const parts = parseList(raw);
-  if (!parts) return null;
-  const ids = new Set<number>();
-  for (const p of parts) {
-    const n = Number(p);
-    if (Number.isFinite(n)) ids.add(n);
-  }
-  return ids.size ? ids : null;
-}
-
 export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/stream', async (request: FastifyRequest, reply) => {
+  app.get('/api/sse', async (request: FastifyRequest, reply) => {
     const parsed = querySchema.safeParse(request.query);
     if (!parsed.success) {
       reply.code(400).send({ error: 'bad query', issues: parsed.error.issues });
@@ -40,15 +38,19 @@ export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
     const topicFilter: Set<EventKind> | null = topicList
       ? new Set(
           topicList.filter((t): t is EventKind =>
-            (VALID_KINDS as readonly string[]).includes(t),
+            (VALID_EVENT_KINDS as readonly string[]).includes(t),
           ),
         )
       : null;
-    const idFilter = parseIdList(parsed.data.assetIds);
+    const symbolList = parseList(parsed.data.symbols);
+    const symbolFilter: Set<string> | null = symbolList
+      ? new Set(symbolList.map((s) => s.toUpperCase()))
+      : null;
 
     const queue: Array<{ id: string; event: string; data: string }> = [];
     let closed = false;
     let notify: (() => void) | null = null;
+    const lastTickSentAt = new Map<string, number>();
 
     function enqueue(frame: { id: string; event: string; data: string }): void {
       queue.push(frame);
@@ -62,11 +64,17 @@ export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
     const unsubscribe = eventBus.onAny((event: Event) => {
       if (closed) return;
       if (topicFilter && !topicFilter.has(event.kind)) return;
-      if (idFilter) {
-        const maybeAssetId = (event as { assetId?: number }).assetId;
-        if (typeof maybeAssetId !== 'number' || !idFilter.has(maybeAssetId)) {
+      if (symbolFilter) {
+        const maybeSymbol = (event as { symbol?: string }).symbol;
+        if (typeof maybeSymbol !== 'string' || !symbolFilter.has(maybeSymbol)) {
           return;
         }
+      }
+      if (event.kind === 'tick') {
+        const now = Date.now();
+        const last = lastTickSentAt.get(event.symbol) ?? 0;
+        if (now - last < TICK_MIN_INTERVAL_MS) return;
+        lastTickSentAt.set(event.symbol, now);
       }
       enqueue({
         id: String(event.id),
@@ -80,7 +88,7 @@ export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
       enqueue({
         id: `hb-${Date.now()}`,
         event: 'ping',
-        data: JSON.stringify({ ts: Math.floor(Date.now() / 1000) }),
+        data: JSON.stringify({ ts: Date.now() }),
       });
     }, 15_000);
 
@@ -93,7 +101,7 @@ export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
         notify = null;
         n();
       }
-      logger.debug({ topics: topicList, ids: idFilter && [...idFilter] }, 'sse client closed');
+      logger.debug({ topics: topicList, symbols: symbolList }, 'sse client closed');
     });
 
     async function* stream(): AsyncGenerator<
@@ -106,9 +114,9 @@ export async function registerSseRoutes(app: FastifyInstance): Promise<void> {
         id: `hello-${Date.now()}`,
         event: 'hello',
         data: JSON.stringify({
-          ts: Math.floor(Date.now() / 1000),
+          ts: Date.now(),
           topics: topicList,
-          assetIds: idFilter ? [...idFilter] : null,
+          symbols: symbolList,
         }),
       };
       while (!closed) {

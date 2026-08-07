@@ -1,11 +1,11 @@
 # Wick — Status
 
-**Current phase:** 0 — Reset & carve-out (in progress)
+**Current phase:** 1 — Market data & indicators (done; 12h soak pending)
 
 ## Phase checklist
 
-- [x] Phase 0 — Reset & carve-out (this wave)
-- [ ] Phase 1 — Market data & indicators
+- [x] Phase 0 — Reset & carve-out
+- [x] Phase 1 — Market data & indicators (this wave; 12h soak + WS-drop heal not yet exercised)
 - [ ] Phase 2 — Paper trading engine
 - [ ] Phase 3 — LLM provider layer
 - [ ] Phase 4 — Bots + trigger engine
@@ -33,6 +33,28 @@
   format); the old `api_keys` table is gone.
 - Web app gutted to a shell: `/` WICK placeholder, `/settings` placeholder, palette
   tokens in `globals.css`. Phase 6 rebuilds all pages.
+
+## Phase 1 notes / decisions
+
+- **15m/4h/1d update strategy: periodic REST refresh** (not aggregation). A 5-min cron
+  re-fetches the last 2 klines per (symbol × 15m/4h/1d) and upserts the closed ones —
+  exact Binance values, no aggregation drift, ~21 requests/5 min. WS streams cover 1m/1h.
+- Only CLOSED klines are ever persisted to `candles`; forming candles reach the UI as
+  `candle` events with `closed:false`.
+- Boot sequence: scheduler (funding+F&G polls kick immediately) → WS connect (closed
+  klines buffered) → REST backfill 500/(symbol×tf) (~15 s for 35 requests) → buffer
+  flush → `marketWarm` flag+event → indicator engine subscribe + one full compute pass.
+  The boot pass is standard behaviour, so indicators are queryable right after any boot.
+- Indicator names (Phase 5 joins on these 1:1): `rsi14, ema_trend, macd, bollinger,
+  atr14, volume_ratio, funding, fear_greed` — vote rules live in `INDICATOR_DEFS`
+  (apps/server/src/market/indicator-engine.ts), computed on 1h close only.
+- API: `/api/market/candles`, `/api/market/indicators`, `/api/market/summary`;
+  SSE moved to `/api/sse` (ticks throttled ≤2/s per symbol per connection).
+- Funding polled 15-min for all 7 symbols (fapi premiumIndex); F&G daily; both cached
+  in memory only (latest value queryable, staleness tolerated silently). OI polling
+  from the old collector was dropped — nothing in the plan consumes it.
+- Hourly self-heal at :07 counts missing recent buckets per (symbol × tf) and
+  REST-backfills the window when any are missing.
 
 ## Blockers
 

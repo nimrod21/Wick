@@ -1,38 +1,36 @@
 /**
- * Binance combined-stream WebSocket collector.
+ * Binance combined-stream WebSocket collector (Wick schema, symbol-keyed).
  *
- * Subscribes every enabled binance asset to three streams:
- *   <symbol>@kline_1m    → persisted 1m candles + forming-candle tick events
- *   <symbol>@trade       → TradeTickEvent (not persisted)
- *   <symbol>@depth20@100ms → OrderbookEvent + in-memory snapshot cache
+ * Per active asset:
+ *   <symbol>@trade       → TickEvent + last-price cache (paper engine reads this)
+ *   <symbol>@miniTicker  → 24h stats cache (last/open/high/low/volume) for /summary
+ *   <symbol>@kline_1m    → closed 1m candles persisted + candle events
+ *   <symbol>@kline_1h    → closed 1h candles persisted + candle events (indicator engine wakes on these)
  *
  * Reconnect: exponential backoff 1s → 30s cap. Heartbeat timeout forces
- * reconnect after 10 min of silence. On reconnect, backfill any gap.
+ * reconnect after 10 min of silence. On reconnect, REST gap-backfill 1m/1h.
+ *
+ * Backfill race: while the boot backfill runs, closed klines are BUFFERED
+ * (not persisted, not emitted). `flushKlineBuffer()` applies them after
+ * backfill completes — upserts are idempotent so overlap is harmless.
  */
 
 import WebSocket from 'ws';
-import type {
-  AssetId,
-  OrderbookEvent,
-  OrderbookLevel,
-  PriceCandleEvent,
-  Timeframe,
-  TradeTickEvent,
-} from '@wick/shared';
+import type { CandleEvent, TickEvent } from '@wick/shared';
 import { db } from '../../db/client.js';
 import { eventBus } from '../../core/event-bus.js';
 import { logger } from '../../util/logger.js';
-import { nowSec } from '../../util/time.js';
-import { backfillGap } from './binance-rest.js';
+import {
+  backfillGap,
+  getActiveSymbols,
+  upsertCandle,
+  type WickTf,
+} from './binance-rest.js';
 
 const WS_BASE = 'wss://stream.binance.com:9443/stream';
 const BACKOFF_SCHEDULE = [1000, 2000, 4000, 8000, 16000, 30000];
 const HEARTBEAT_TIMEOUT_MS = 10 * 60 * 1000;
-
-interface CryptoAssetRow {
-  id: number;
-  symbol: string;
-}
+const WS_TFS: WickTf[] = ['1m', '1h'];
 
 interface BinanceKlineMsg {
   e: 'kline';
@@ -60,20 +58,45 @@ interface BinanceTradeMsg {
   p: string;
   q: string;
   T: number;
-  m: boolean; // buyer is market maker → trade was a sell
+  m: boolean; // buyer is market maker → aggressor was a seller
 }
 
-interface BinanceDepthMsg {
-  // depth20 partial-book snapshot (no event type field)
-  lastUpdateId: number;
-  bids: [string, string][];
-  asks: [string, string][];
+interface BinanceMiniTickerMsg {
+  e: '24hrMiniTicker';
+  E: number;
+  s: string;
+  c: string; // last price
+  o: string; // 24h-ago open
+  h: string;
+  l: string;
+  v: string; // base volume
+  q: string; // quote volume
 }
 
-type BinanceStreamMsg =
-  | { stream: string; data: BinanceKlineMsg }
-  | { stream: string; data: BinanceTradeMsg }
-  | { stream: string; data: BinanceDepthMsg };
+type BinanceStreamMsg = {
+  stream: string;
+  data: BinanceKlineMsg | BinanceTradeMsg | BinanceMiniTickerMsg;
+};
+
+export interface TickerStats {
+  lastPrice: number;
+  changePct24h: number;
+  high24h: number;
+  low24h: number;
+  volume24h: number;
+  ts: number;
+}
+
+interface BufferedKline {
+  symbol: string;
+  tf: WickTf;
+  ts: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
 
 let ws: WebSocket | null = null;
 let reconnectAttempt = 0;
@@ -82,98 +105,94 @@ let heartbeatTimer: NodeJS.Timeout | null = null;
 let lastMessageAt = 0;
 let stopping = false;
 let eventIdSeq = 1;
+let buffering = true;
 
-const orderbookCache = new Map<AssetId, OrderbookEvent>();
-const symbolToAssetId = new Map<string, number>();
-const lastCandleTsByAsset = new Map<AssetId, number>();
-
-const upsert1mStmt = db.prepare(
-  `INSERT OR REPLACE INTO candles_1m (asset_id, ts, o, h, l, c, v)
-   VALUES (?, ?, ?, ?, ?, ?, ?)`,
-);
+const klineBuffer: BufferedKline[] = [];
+const knownSymbols = new Set<string>();
+const lastPriceBySymbol = new Map<string, number>();
+const tickerStatsBySymbol = new Map<string, TickerStats>();
+/** key `${symbol}:${tf}` → last persisted candle open ts (ms). */
+const lastCandleTs = new Map<string, number>();
 
 function nextEventId(): number {
   return eventIdSeq++;
 }
 
-function getEnabledBinanceAssets(): CryptoAssetRow[] {
-  return db
-    .prepare(
-      `SELECT id, symbol FROM assets
-        WHERE type = 'crypto' AND exchange = 'binance' AND enabled = 1
-        ORDER BY id`,
-    )
-    .all() as CryptoAssetRow[];
-}
-
-function buildStreamsUrl(assets: CryptoAssetRow[]): string {
+function buildStreamsUrl(symbols: string[]): string {
   const streams: string[] = [];
-  for (const a of assets) {
-    const s = a.symbol.toLowerCase();
-    streams.push(`${s}@kline_1m`);
-    streams.push(`${s}@kline_3m`);
-    streams.push(`${s}@kline_15m`);
-    streams.push(`${s}@kline_1h`);
-    streams.push(`${s}@kline_4h`);
-    streams.push(`${s}@kline_1d`);
-    streams.push(`${s}@kline_1w`);
+  for (const sym of symbols) {
+    const s = sym.toLowerCase();
     streams.push(`${s}@trade`);
-    streams.push(`${s}@depth20@100ms`);
+    streams.push(`${s}@miniTicker`);
+    streams.push(`${s}@kline_1m`);
+    streams.push(`${s}@kline_1h`);
   }
   return `${WS_BASE}?streams=${streams.join('/')}`;
 }
 
-function parseLevels(raw: [string, string][]): OrderbookLevel[] {
-  const out: OrderbookLevel[] = [];
-  for (const [p, q] of raw) {
-    out.push([parseFloat(p), parseFloat(q)]);
+function persistClosedKline(k: BufferedKline): void {
+  try {
+    upsertCandle(k.symbol, k.tf, k.ts, k.o, k.h, k.l, k.c, k.v);
+    lastCandleTs.set(`${k.symbol}:${k.tf}`, k.ts);
+  } catch (err) {
+    logger.error({ err, symbol: k.symbol, tf: k.tf, ts: k.ts }, 'failed to persist candle');
   }
-  return out;
 }
 
-function handleKline(assetId: AssetId, msg: BinanceKlineMsg): void {
+function handleKline(symbol: string, msg: BinanceKlineMsg): void {
   const k = msg.k;
-  const tsSec = Math.floor(k.t / 1000);
-  const o = parseFloat(k.o);
-  const h = parseFloat(k.h);
-  const l = parseFloat(k.l);
-  const c = parseFloat(k.c);
-  const v = parseFloat(k.v);
+  const tf = k.i as WickTf;
+  if (!WS_TFS.includes(tf)) return;
+  const candle: BufferedKline = {
+    symbol,
+    tf,
+    ts: k.t,
+    o: parseFloat(k.o),
+    h: parseFloat(k.h),
+    l: parseFloat(k.l),
+    c: parseFloat(k.c),
+    v: parseFloat(k.v),
+  };
 
-  if (k.x && k.i === '1m') {
-    // closed 1m candle: persist
-    try {
-      upsert1mStmt.run(assetId, tsSec, o, h, l, c, v);
-      lastCandleTsByAsset.set(assetId, tsSec);
-    } catch (err) {
-      logger.error({ err, assetId, tsSec }, 'failed to persist candle_1m');
+  if (k.x) {
+    if (buffering) {
+      // Boot backfill still running — hold closed klines, apply after.
+      klineBuffer.push(candle);
+      return;
     }
+    persistClosedKline(candle);
+  } else if (buffering) {
+    // Forming candles are UI-only; suppress until market is warm.
+    return;
   }
 
-  const evt: PriceCandleEvent = {
+  const evt: CandleEvent = {
     id: nextEventId(),
-    ts: tsSec,
+    ts: candle.ts,
     source: 'binance-ws',
     kind: 'candle',
-    assetId,
-    timeframe: k.i as Timeframe,
-    o,
-    h,
-    l,
-    c,
-    v,
+    symbol,
+    tf,
+    o: candle.o,
+    h: candle.h,
+    l: candle.l,
+    c: candle.c,
+    v: candle.v,
+    closed: k.x,
   };
   eventBus.emit(evt);
 }
 
-function handleTrade(assetId: AssetId, msg: BinanceTradeMsg): void {
-  const evt: TradeTickEvent = {
+function handleTrade(symbol: string, msg: BinanceTradeMsg): void {
+  const price = parseFloat(msg.p);
+  lastPriceBySymbol.set(symbol, price);
+  const evt: TickEvent = {
     id: nextEventId(),
-    ts: Math.floor(msg.T / 1000),
+    ts: msg.T,
     source: 'binance-ws',
-    kind: 'trade_tick',
-    assetId,
-    price: parseFloat(msg.p),
+    kind: 'tick',
+    symbol,
+    price,
     qty: parseFloat(msg.q),
     // m=true → buyer is maker → aggressor was a seller
     side: msg.m ? 'sell' : 'buy',
@@ -181,18 +200,18 @@ function handleTrade(assetId: AssetId, msg: BinanceTradeMsg): void {
   eventBus.emit(evt);
 }
 
-function handleDepth(assetId: AssetId, msg: BinanceDepthMsg): void {
-  const evt: OrderbookEvent = {
-    id: nextEventId(),
-    ts: nowSec(),
-    source: 'binance-ws',
-    kind: 'orderbook',
-    assetId,
-    bids: parseLevels(msg.bids),
-    asks: parseLevels(msg.asks),
-  };
-  orderbookCache.set(assetId, evt);
-  eventBus.emit(evt);
+function handleMiniTicker(symbol: string, msg: BinanceMiniTickerMsg): void {
+  const last = parseFloat(msg.c);
+  const open = parseFloat(msg.o);
+  lastPriceBySymbol.set(symbol, last);
+  tickerStatsBySymbol.set(symbol, {
+    lastPrice: last,
+    changePct24h: open > 0 ? ((last - open) / open) * 100 : 0,
+    high24h: parseFloat(msg.h),
+    low24h: parseFloat(msg.l),
+    volume24h: parseFloat(msg.v),
+    ts: msg.E,
+  });
 }
 
 function handleMessage(raw: string | Buffer): void {
@@ -208,17 +227,17 @@ function handleMessage(raw: string | Buffer): void {
   if (!streamName) return;
 
   // stream format: "<symbol>@<type>..." — symbol is always the first part.
-  const symbol = streamName.split('@', 1)[0];
-  if (!symbol) return;
-  const assetId = symbolToAssetId.get(symbol);
-  if (assetId === undefined) return;
+  const lower = streamName.split('@', 1)[0];
+  if (!lower) return;
+  const symbol = lower.toUpperCase();
+  if (!knownSymbols.has(symbol)) return;
 
   if (streamName.includes('@kline')) {
-    handleKline(assetId, parsed.data as BinanceKlineMsg);
+    handleKline(symbol, parsed.data as BinanceKlineMsg);
   } else if (streamName.includes('@trade')) {
-    handleTrade(assetId, parsed.data as BinanceTradeMsg);
-  } else if (streamName.includes('@depth')) {
-    handleDepth(assetId, parsed.data as BinanceDepthMsg);
+    handleTrade(symbol, parsed.data as BinanceTradeMsg);
+  } else if (streamName.includes('@miniTicker')) {
+    handleMiniTicker(symbol, parsed.data as BinanceMiniTickerMsg);
   }
 }
 
@@ -257,16 +276,19 @@ function scheduleReconnect(): void {
   if (stopping) return;
   clearReconnectTimer();
   const delay =
-    BACKOFF_SCHEDULE[Math.min(reconnectAttempt, BACKOFF_SCHEDULE.length - 1)];
+    BACKOFF_SCHEDULE[Math.min(reconnectAttempt, BACKOFF_SCHEDULE.length - 1)]!;
   reconnectAttempt += 1;
   logger.info({ attempt: reconnectAttempt, delayMs: delay }, 'binance ws: reconnect scheduled');
   reconnectTimer = setTimeout(() => {
-    // Fire-and-forget gap backfill for every asset before we reconnect,
+    // Fire-and-forget gap backfill per (symbol, tf) before we reconnect,
     // so post-reconnect state is accurate. Don't await — let it run.
-    for (const [assetId, lastTs] of lastCandleTsByAsset.entries()) {
-      void backfillGap(assetId, lastTs).catch((err) => {
-        logger.error({ err, assetId }, 'reconnect backfill failed');
-      });
+    if (!buffering) {
+      for (const [key, lastTs] of lastCandleTs.entries()) {
+        const [symbol, tf] = key.split(':') as [string, WickTf];
+        void backfillGap(symbol, tf, lastTs).catch((err) => {
+          logger.error({ err, symbol, tf }, 'reconnect backfill failed');
+        });
+      }
     }
     void connect();
   }, delay);
@@ -274,19 +296,17 @@ function scheduleReconnect(): void {
 
 async function connect(): Promise<void> {
   if (stopping) return;
-  const assets = getEnabledBinanceAssets();
-  if (assets.length === 0) {
-    logger.warn('binance ws: no enabled assets, not connecting');
+  const symbols = getActiveSymbols();
+  if (symbols.length === 0) {
+    logger.warn('binance ws: no active assets, not connecting');
     return;
   }
-  symbolToAssetId.clear();
-  for (const a of assets) {
-    symbolToAssetId.set(a.symbol.toLowerCase(), a.id);
-  }
+  knownSymbols.clear();
+  for (const s of symbols) knownSymbols.add(s);
 
-  const url = buildStreamsUrl(assets);
+  const url = buildStreamsUrl(symbols);
   logger.info(
-    { assetCount: assets.length, streams: assets.length * 3 },
+    { symbolCount: symbols.length, streams: symbols.length * 4 },
     'binance ws: connecting',
   );
 
@@ -296,9 +316,7 @@ async function connect(): Promise<void> {
   socket.on('open', () => {
     reconnectAttempt = 0;
     startHeartbeatWatchdog();
-    for (const a of assets) {
-      logger.info({ symbol: a.symbol, assetId: a.id }, 'ws subscribed');
-    }
+    logger.info({ symbols }, 'binance ws: subscribed');
   });
 
   socket.on('message', (data: WebSocket.RawData) => {
@@ -311,33 +329,50 @@ async function connect(): Promise<void> {
   });
 
   socket.on('close', (code: number, reason: Buffer) => {
-    logger.warn(
-      { code, reason: reason.toString() },
-      'binance ws: closed',
-    );
+    logger.warn({ code, reason: reason.toString() }, 'binance ws: closed');
     clearHeartbeatTimer();
     ws = null;
     scheduleReconnect();
   });
 }
 
+/**
+ * Start the WS collector. Closed klines are buffered until
+ * `flushKlineBuffer()` is called (after the boot REST backfill).
+ */
 export async function startBinanceWs(): Promise<void> {
   stopping = false;
-  // Prime lastCandleTsByAsset from DB so the first reconnect (if any)
-  // knows where to backfill from.
-  const rows = db
-    .prepare(
-      `SELECT c.asset_id AS assetId, MAX(c.ts) AS lastTs
-         FROM candles_1m c
-         JOIN assets a ON a.id = c.asset_id
-        WHERE a.type = 'crypto' AND a.exchange = 'binance' AND a.enabled = 1
-        GROUP BY c.asset_id`,
-    )
-    .all() as Array<{ assetId: number; lastTs: number }>;
-  for (const r of rows) {
-    if (r.lastTs) lastCandleTsByAsset.set(r.assetId, r.lastTs);
+  buffering = true;
+  // Prime lastCandleTs from DB so the first reconnect (if any) knows where
+  // to backfill from.
+  for (const tf of WS_TFS) {
+    const rows = db
+      .prepare(
+        `SELECT c.symbol AS symbol, MAX(c.ts) AS lastTs
+           FROM candles c
+           JOIN assets a ON a.symbol = c.symbol
+          WHERE a.active = 1 AND c.tf = ?
+          GROUP BY c.symbol`,
+      )
+      .all(tf) as Array<{ symbol: string; lastTs: number }>;
+    for (const r of rows) {
+      if (r.lastTs) lastCandleTs.set(`${r.symbol}:${tf}`, r.lastTs);
+    }
   }
   await connect();
+}
+
+/**
+ * Apply klines buffered during the boot backfill, then switch to live
+ * persist-on-close mode. No candle events are emitted for the flushed rows —
+ * the boot sequence runs a full indicator pass right after.
+ */
+export function flushKlineBuffer(): void {
+  const flushed = klineBuffer.length;
+  for (const k of klineBuffer) persistClosedKline(k);
+  klineBuffer.length = 0;
+  buffering = false;
+  logger.info({ flushed }, 'binance ws: kline buffer flushed, live mode');
 }
 
 export async function stopBinanceWs(): Promise<void> {
@@ -354,6 +389,16 @@ export async function stopBinanceWs(): Promise<void> {
   }
 }
 
-export function getLatestOrderbook(assetId: AssetId): OrderbookEvent | null {
-  return orderbookCache.get(assetId) ?? null;
+/**
+ * Latest traded price for a symbol (live mid proxy — Binance @trade last
+ * price, also refreshed by @miniTicker). Phase 2's paper engine fills at
+ * this price ± slippage.
+ */
+export function getLastPrice(symbol: string): number | null {
+  return lastPriceBySymbol.get(symbol) ?? null;
+}
+
+/** Latest 24h rolling stats from @miniTicker (null until first frame). */
+export function getTickerStats(symbol: string): TickerStats | null {
+  return tickerStatsBySymbol.get(symbol) ?? null;
 }

@@ -1,170 +1,100 @@
 /**
  * Crypto Fear & Greed Index collector — alternative.me (no key).
  *
- * Polls every 30 minutes. On first run backfills the last 30 entries so the
- * mini-history chart renders immediately. Each insert is upserted against
- * `(name='fng_crypto', ts)` — the unique constraint in `indicator_readings`
- * makes repeat fetches idempotent. Emits an `IndicatorEvent` with previous
- * value + delta when the latest reading actually changes.
+ * Polls once a day (the index updates daily) plus once at start. The latest
+ * value is cached in memory and queryable via `getLatestFearGreed()` — the
+ * indicator engine reads it on every 1h close. A `fear_greed` bus event is
+ * published when the value changes.
+ *
+ * alternative.me has no SLA — failures are logged and the last cached value
+ * keeps serving, however stale (PLAN §16 / IMPL-1 pitfalls).
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
-import type { IndicatorEvent } from '@wick/shared';
-import { db } from '../../db/client.js';
+import type { FearGreedEvent } from '@wick/shared';
 import { eventBus } from '../../core/event-bus.js';
 import { logger } from '../../util/logger.js';
-import { nowSec } from '../../util/time.js';
 
-const TICK_CRON = '*/30 * * * *';
-const INDICATOR_NAME = 'fng_crypto';
+const TICK_CRON = '10 0 * * *'; // daily at 00:10 UTC-ish (server local); index updates daily
 const API_URL = 'https://api.alternative.me/fng/';
 
 interface FngEntry {
   value: string;
   value_classification: string;
   timestamp: string; // unix seconds as string
-  time_until_update?: string;
 }
 
 interface FngResponse {
-  name?: string;
   data?: FngEntry[];
   metadata?: { error?: string | null };
+}
+
+export interface FearGreedSnapshot {
+  value: number;
+  classification: string;
+  ts: number; // ms
 }
 
 let task: ScheduledTask | null = null;
 let running = false;
 let stopping = false;
-let backfilled = false;
 let eventIdSeq = 1;
-let lastEmittedTs = 0;
-
-const upsertStmt = db.prepare(
-  `INSERT INTO indicator_readings (name, ts, value, meta_json)
-   VALUES (?, ?, ?, ?)
-   ON CONFLICT(name, ts) DO UPDATE SET
-     value = excluded.value,
-     meta_json = excluded.meta_json`,
-);
-
-const priorValueStmt = db.prepare(
-  `SELECT value FROM indicator_readings
-    WHERE name = ? AND ts < ?
-    ORDER BY ts DESC
-    LIMIT 1`,
-);
-
-const latestStmt = db.prepare(
-  `SELECT ts, value FROM indicator_readings
-    WHERE name = ?
-    ORDER BY ts DESC
-    LIMIT 1`,
-);
+let latest: FearGreedSnapshot | null = null;
 
 function nextEventId(): number {
   return eventIdSeq++;
 }
 
-async function fetchFng(limit: number): Promise<FngEntry[]> {
-  const url = `${API_URL}?limit=${limit}`;
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      logger.warn({ status: resp.status }, 'fear-greed: http error');
-      return [];
-    }
-    const json = (await resp.json()) as FngResponse;
-    if (json.metadata?.error) {
-      logger.warn({ err: json.metadata.error }, 'fear-greed: api error');
-      return [];
-    }
-    return Array.isArray(json.data) ? json.data : [];
-  } catch (err) {
-    logger.error({ err }, 'fear-greed: fetch failed');
-    return [];
-  }
-}
-
-function persistEntry(entry: FngEntry): { ts: number; value: number } | null {
-  const value = Number(entry.value);
-  const ts = Number(entry.timestamp);
-  if (!Number.isFinite(value) || !Number.isFinite(ts)) return null;
-  const meta = JSON.stringify({ classification: entry.value_classification });
-  upsertStmt.run(INDICATOR_NAME, ts, value, meta);
-  return { ts, value };
-}
-
 async function tick(): Promise<void> {
   if (stopping) return;
-
-  const limit = backfilled ? 1 : 30;
-  const entries = await fetchFng(limit);
-  if (entries.length === 0) return;
-
-  // API returns newest-first; persist oldest-first so prior-value lookup works.
-  const ordered = [...entries].sort(
-    (a, b) => Number(a.timestamp) - Number(b.timestamp),
-  );
-
-  let emittedForRun = false;
-  for (const entry of ordered) {
-    const stored = persistEntry(entry);
-    if (!stored) continue;
-
-    // Only emit an event for the newest entry (no event spam during backfill).
-    const isNewest = stored.ts === Number(ordered[ordered.length - 1]?.timestamp);
-    if (!isNewest || emittedForRun) continue;
-    if (stored.ts <= lastEmittedTs) continue;
-
-    const priorRow = priorValueStmt.get(INDICATOR_NAME, stored.ts) as
-      | { value: number }
-      | undefined;
-    const previous = priorRow?.value;
-    const delta = previous !== undefined ? stored.value - previous : undefined;
-
-    const evt: IndicatorEvent = {
-      id: nextEventId(),
-      ts: stored.ts,
-      source: 'alternative.me',
-      kind: 'indicator',
-      name: INDICATOR_NAME,
-      value: stored.value,
-      ...(previous !== undefined ? { previous } : {}),
-      ...(delta !== undefined ? { delta } : {}),
-    };
-    eventBus.emit(evt);
-    lastEmittedTs = stored.ts;
-    emittedForRun = true;
+  let json: FngResponse;
+  try {
+    const resp = await fetch(`${API_URL}?limit=1`);
+    if (!resp.ok) {
+      logger.warn({ status: resp.status }, 'fear-greed: http error');
+      return;
+    }
+    json = (await resp.json()) as FngResponse;
+  } catch (err) {
+    logger.error({ err }, 'fear-greed: fetch failed');
+    return;
   }
+  if (json.metadata?.error) {
+    logger.warn({ err: json.metadata.error }, 'fear-greed: api error');
+    return;
+  }
+  const entry = json.data?.[0];
+  if (!entry) return;
+  const value = Number(entry.value);
+  const tsSec = Number(entry.timestamp);
+  if (!Number.isFinite(value) || !Number.isFinite(tsSec)) return;
 
-  backfilled = true;
+  const changed = latest?.value !== value;
+  latest = { value, classification: entry.value_classification, ts: tsSec * 1000 };
+  if (!changed) return;
+
+  const evt: FearGreedEvent = {
+    id: nextEventId(),
+    ts: latest.ts,
+    source: 'alternative.me',
+    kind: 'fear_greed',
+    value,
+    classification: latest.classification,
+  };
+  eventBus.emit(evt);
 }
 
 export function startFearGreed(): void {
   if (running) return;
   running = true;
   stopping = false;
-
-  const latest = latestStmt.get(INDICATOR_NAME) as
-    | { ts: number; value: number }
-    | undefined;
-  if (latest) {
-    lastEmittedTs = latest.ts;
-    // If we already have at least 5 historic rows, skip backfill — treat
-    // existing data as sufficient.
-    const { count } = db
-      .prepare('SELECT COUNT(*) AS count FROM indicator_readings WHERE name = ?')
-      .get(INDICATOR_NAME) as { count: number };
-    if (count >= 5) backfilled = true;
-  }
-
-  logger.info('fear-greed collector enabled');
+  logger.info('fear-greed collector enabled (daily poll)');
   task = cron.schedule(TICK_CRON, () => {
     void tick().catch((err: unknown) => {
       logger.error({ err }, 'fear-greed tick failed');
     });
   });
-  // Kick immediately so first-run backfill happens at boot, not 30 min later.
+  // Kick immediately so the indicator engine has a value right after boot.
   void tick().catch((err: unknown) => {
     logger.error({ err }, 'fear-greed initial tick failed');
   });
@@ -181,6 +111,12 @@ export function stopFearGreed(): void {
     }
     task = null;
   }
+}
+
+/** Latest cached F&G snapshot; null before the first successful poll.
+ *  May be up to a day stale — callers tolerate that silently. */
+export function getLatestFearGreed(): FearGreedSnapshot | null {
+  return latest;
 }
 
 export function isFearGreedRunning(): boolean {

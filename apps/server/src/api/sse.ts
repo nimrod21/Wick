@@ -1,20 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { Event, EventKind } from '@cockpit/shared';
+import { VALID_EVENT_KINDS, type Event, type EventKind } from '@wick/shared';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';
 
-const VALID_KINDS: readonly EventKind[] = [
-  'candle',
-  'whale_tx',
-  'news',
-  'indicator',
-  'alert',
-  'trade_tick',
-  'orderbook',
-  'probability',
-  'order_status',
-];
+const VALID_KINDS: readonly EventKind[] = VALID_EVENT_KINDS;
 
 const querySchema = z.object({
   topics: z.string().optional(),

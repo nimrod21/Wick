@@ -8,14 +8,14 @@
  *      real broker).
  *   3. Runs the risk guards centrally — every broker inherits the same
  *      policy.
- *   4. Dispatches to the correct broker (ccxt for crypto, alpaca for
- *      stocks/etfs; paper is routed through ccxt in paper-shim mode).
+ *   4. Dispatches to the paper broker (the only broker in Wick — no live
+ *      execution anywhere).
  *   5. Emits `order_status` events on the bus so the UI + future bots
  *      get a consistent stream.
  *
- * The background watcher polls every 2s for non-paper orders still in
- * `submitted`/`partial` and reconciles their status by calling back into
- * the broker. Paper orders are swept by `paper-mode.ts` on its own cron.
+ * Phase 2 rewires this — bot-scoped orders, fees/slippage model, and the
+ * assets-by-symbol schema replace the legacy shapes below. Paper orders
+ * are swept by `paper-mode.ts` on its own cron.
  */
 
 import { z } from 'zod';
@@ -25,13 +25,11 @@ import type {
   OrderStatus,
   PlaceOrderRequest,
   Position,
-} from '@cockpit/shared';
+} from '@wick/shared';
 import { db } from '../db/client.js';
 import { logger } from '../util/logger.js';
 import { guard } from './risk-guards.js';
 import { paperBroker } from './paper-mode.js';
-import { cryptoCcxtBroker } from './crypto-ccxt.js';
-import { stocksAlpacaBroker } from './stocks-alpaca.js';
 
 const SIDES = ['buy', 'sell'] as const;
 const TYPES = ['market', 'limit', 'stop'] as const;
@@ -133,10 +131,9 @@ function resolveTradeableAsset(asset: AssetRow): AssetRow | null {
   return null;
 }
 
-function brokerFor(asset: AssetRow): Broker | null {
-  if (asset.tradeable_via === 'ccxt') return cryptoCcxtBroker;
-  if (asset.tradeable_via === 'alpaca') return stocksAlpacaBroker;
-  return null;
+// Phase 2 rewires this — paper is the only broker.
+function brokerFor(_asset: AssetRow): Broker | null {
+  return paperBroker;
 }
 
 function brokerNameFor(asset: AssetRow): string {
@@ -234,17 +231,8 @@ class OrderManager {
       .prepare(`SELECT * FROM orders WHERE client_order_id = ?`)
       .get(clientOrderId) as OrderRow | undefined;
     if (!row) throw new Error('order not found');
-    // Local row is authoritative for paper; for live brokers we prefer a
-    // fresh read because the status may have transitioned between watcher
-    // ticks.
-    if (row.broker === 'paper') return rowToOrder(row);
-    const broker = this.brokerByName(row.broker);
-    if (!broker) return rowToOrder(row);
-    try {
-      return await broker.getOrder(clientOrderId);
-    } catch {
-      return rowToOrder(row);
-    }
+    // Local row is authoritative — paper is the only broker.
+    return rowToOrder(row);
   }
 
   async listOpenOrders(): Promise<Order[]> {
@@ -268,18 +256,13 @@ class OrderManager {
   }
 
   /**
-   * Background watcher — every 2s reconcile live orders that are still
-   * open with their broker of record. Paper orders are skipped; they're
-   * swept by the fill-scan cron.
+   * Background watcher — no-op in Wick (paper orders are swept by the
+   * fill-scan cron in paper-mode.ts). Kept so lifecycle call sites stay
+   * stable; Phase 2 rewires this.
    */
   start(): void {
     if (this.watcher) return;
-    this.watcher = setInterval(() => {
-      this.tickWatcher().catch((err) => {
-        logger.error({ err }, 'order-manager watcher tick failed');
-      });
-    }, 2000);
-    logger.info('order-manager watcher started (every 2s)');
+    logger.info('order-manager started (paper-only, no watcher needed)');
   }
 
   stop(): void {
@@ -289,31 +272,8 @@ class OrderManager {
     }
   }
 
-  private async tickWatcher(): Promise<void> {
-    const rows = db
-      .prepare(
-        `SELECT * FROM orders
-           WHERE broker IN ('ccxt','alpaca')
-             AND status IN ('submitted','partial')
-           ORDER BY created_at DESC
-           LIMIT 100`,
-      )
-      .all() as OrderRow[];
-    for (const row of rows) {
-      const broker = this.brokerByName(row.broker);
-      if (!broker) continue;
-      try {
-        await broker.getOrder(row.client_order_id);
-      } catch (err) {
-        logger.debug({ err, clientOrderId: row.client_order_id }, 'watcher getOrder failed');
-      }
-    }
-  }
-
   private brokerByName(name: string): Broker | null {
     if (name === 'paper') return paperBroker;
-    if (name === 'ccxt') return cryptoCcxtBroker;
-    if (name === 'alpaca') return stocksAlpacaBroker;
     return null;
   }
 }

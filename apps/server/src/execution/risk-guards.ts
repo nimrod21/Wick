@@ -1,19 +1,14 @@
 /**
- * Risk guards — Phase 9 + Phase 10 live-mode extensions.
+ * Risk guards (legacy pipeline, kept as adaptation base).
  *
- * Six base policies from PLAN.md §13 plus three live-mode-only policies
- * added in Phase 10 (daily order count cap, global live cooldown,
- * first-per-asset session confirmation). All enforced once centrally in
- * `order-manager` before any broker.placeOrder call. Each guard either
- * short-circuits with `{ ok: false, reason, detail? }` or advances to
- * the next; returns `{ ok: true }` only when all pass.
- *
- * Defaults (when `kv` row missing) live here so a fresh install is safe
- * out of the box: $500 max notional, 1 open pos per asset, -$1000 daily
- * loss cap, 10s cooldown, 20 live orders/day, 30s global live cooldown.
+ * Phase 2 rewires this — Wick's per-bot guards (min confidence, cooldown,
+ * min-hold, max trades/day, max position %, SL/TP clamps, drawdown kill)
+ * replace these portfolio-level rules, reading per-bot config instead of
+ * the old `kv` table. Kept as the adaptation base. All enforced once
+ * centrally in `order-manager` before any broker.placeOrder call.
  */
 
-import type { PlaceOrderRequest } from '@cockpit/shared';
+import type { PlaceOrderRequest } from '@wick/shared';
 import { db } from '../db/client.js';
 import { nowSec } from '../util/time.js';
 
@@ -27,24 +22,6 @@ const DEFAULT_MAX_NOTIONAL = 500;
 const DEFAULT_MAX_OPEN_POSITIONS = 1;
 const DEFAULT_DAILY_LOSS_CAP = -1000;
 const DEFAULT_COOLDOWN_SECONDS = 10;
-const DEFAULT_LIVE_MAX_ORDERS_PER_DAY = 20;
-const DEFAULT_LIVE_GLOBAL_COOLDOWN_SECONDS = 30;
-
-// In-memory set of assetIds for which the user has confirmed their first
-// live order in the current server session. Resets on restart by design —
-// the whole point is that the user must re-acknowledge each time the
-// process boots.
-const firstLiveConfirmedSession = new Set<number>();
-
-/** Exposed for the live-mode API so deactivation can clear session state. */
-export function resetFirstLiveConfirmed(): void {
-  firstLiveConfirmedSession.clear();
-}
-
-/** Exposed for tests / diagnostics. */
-export function hasFirstLiveConfirmed(assetId: number): boolean {
-  return firstLiveConfirmedSession.has(assetId);
-}
 
 // ── kv helpers ─────────────────────────────────────────────────────────
 
@@ -204,58 +181,6 @@ export async function guard(req: PlaceOrderRequest): Promise<GuardResult> {
   // request is the only one that carries it; bots will set it too.
   if (!req.confirmed) {
     return fail('confirmation_required');
-  }
-
-  // ── Live-mode extra guards (Phase 10) ───────────────────────────────
-  // Only engaged when the user has flipped `trading_mode=live` via the
-  // Settings danger-zone flow. Paper paths never pass these.
-  if (kvGet('trading_mode') === 'live') {
-    // 7. Daily order count cap. Counts orders placed through the ccxt
-    // broker today (since midnight UTC) regardless of status.
-    const startOfDayUtc = Math.floor(Date.now() / 86_400_000) * 86_400;
-    const dayCountRow = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM orders
-           WHERE broker = 'ccxt' AND created_at >= ?`,
-      )
-      .get(startOfDayUtc) as { n: number };
-    const maxPerDay = kvNumber('live_max_orders_per_day', DEFAULT_LIVE_MAX_ORDERS_PER_DAY);
-    if (dayCountRow.n >= maxPerDay) {
-      return fail('live_daily_order_cap_reached', {
-        count: dayCountRow.n,
-        max: maxPerDay,
-      });
-    }
-
-    // 8. Global live cooldown — any live order placed within the window
-    // blocks the next one. Catches bot loops regardless of asset.
-    const globalCooldown = kvNumber(
-      'live_order_global_cooldown_seconds',
-      DEFAULT_LIVE_GLOBAL_COOLDOWN_SECONDS,
-    );
-    const lastLive = db
-      .prepare(
-        `SELECT created_at FROM orders
-           WHERE broker = 'ccxt'
-           ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get() as { created_at: number } | undefined;
-    if (lastLive && nowSec() - lastLive.created_at < globalCooldown) {
-      return fail('live_global_cooldown_active', {
-        remainingSec: globalCooldown - (nowSec() - lastLive.created_at),
-      });
-    }
-
-    // 9. First-per-asset session confirmation — user must explicitly
-    // confirm the first live order on any given asset per server session.
-    if (!firstLiveConfirmedSession.has(req.assetId)) {
-      if (!req.firstPerAssetConfirmed) {
-        return fail('first_per_asset_confirm_required', { assetId: req.assetId });
-      }
-      // Caller provided the flag — record it so subsequent orders in
-      // this session skip the gate for this asset.
-      firstLiveConfirmedSession.add(req.assetId);
-    }
   }
 
   return { ok: true };

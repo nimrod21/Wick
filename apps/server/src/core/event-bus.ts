@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Event, EventKind } from '@cockpit/shared';
+import type { Event, EventKind } from '@wick/shared';
 
 type EventOfKind<K extends EventKind> = Extract<Event, { kind: K }>;
 

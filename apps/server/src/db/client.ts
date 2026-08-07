@@ -12,7 +12,7 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, 'cockpit.db');
+const dbPath = path.join(dataDir, 'wick.db');
 
 export const db: DatabaseType = new Database(dbPath);
 db.pragma('journal_mode = WAL');

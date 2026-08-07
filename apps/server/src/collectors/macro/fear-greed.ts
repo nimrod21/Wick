@@ -9,7 +9,7 @@
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
-import type { IndicatorEvent } from '@cockpit/shared';
+import type { IndicatorEvent } from '@wick/shared';
 import { db } from '../../db/client.js';
 import { eventBus } from '../../core/event-bus.js';
 import { logger } from '../../util/logger.js';

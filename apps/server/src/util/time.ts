@@ -6,6 +6,11 @@ export function nowSec(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/** Wick schema (PLAN §6): all `ts` columns are UTC unix milliseconds. */
+export function nowMs(): number {
+  return Date.now();
+}
+
 export function toSec(d: Date): number {
   return Math.floor(d.getTime() / 1000);
 }

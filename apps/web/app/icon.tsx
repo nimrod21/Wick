@@ -9,18 +9,18 @@ export default function Icon() {
       <div
         style={{
           fontSize: 24,
-          background: '#0f0820',
+          background: '#0B0B10',
           width: '100%',
           height: '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#00ffff',
+          color: '#33FF66',
           fontFamily: 'monospace',
           fontWeight: 'bold',
         }}
       >
-        C
+        W
       </div>
     ),
     size,

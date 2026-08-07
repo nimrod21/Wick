@@ -1,37 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Pixelify+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Wick palette — PLAN §12. CRT terminal, not neon arcade.
+   Max 3 accents on screen; red only for losses/busted. */
 :root {
-  /* base */
-  --bg-void:       #0a0014;
-  --bg-terminal:   #0f0820;
-  --bg-elevated:   #1a0f30;
-  --border-dim:    #2a1a50;
+  --bg:     #0B0B10; /* near-black base */
+  --panel:  #12121A; /* panel background */
+  --border: #2A2A38; /* 1px hard borders */
 
-  /* neons */
-  --neon-cyan:     #00ffff;
-  --neon-magenta:  #ff00ff;
-  --neon-green:    #39ff14;
-  --neon-red:      #ff3864;
-  --neon-amber:    #ffb000;
-  --neon-purple:   #b967ff;
+  --green:  #33FF66; /* phosphor green — positive/running */
+  --amber:  #FFB000; /* warnings/wait */
+  --cyan:   #2DE2E6; /* info/links */
+  --red:    #FF3860; /* losses/busted only */
 
-  /* text */
-  --text-primary:   #e0e0ff;
-  --text-secondary: #8888bb;
-  --text-dim:       #8a8ab8;
+  --fg:     #E6E6EE;
+  --muted:  #8A8A9E;
 
-  /* semantic chart */
-  --chart-up:    var(--neon-green);
-  --chart-down:  var(--neon-red);
-  --chart-grid:  #1a2040;
-  --chart-axis:  #3a4060;
-
-  /* square everything */
-  --radius: 0px;
+  --radius: 0px; /* square everything */
 }
 
 * {
@@ -40,20 +28,25 @@
 
 html,
 body {
-  background: var(--bg-void);
-  color: var(--text-primary);
-  font-family: 'Pixelify Sans', sans-serif;
-  -webkit-font-smoothing: none;
-  -moz-osx-font-smoothing: grayscale;
-  font-smooth: never;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 ::selection {
-  background: var(--neon-magenta);
-  color: var(--bg-void);
+  background: var(--green);
+  color: var(--bg);
 }
 
-/* --- CRT scanlines overlay -------------------------------------------- */
+/* Pixel font for page titles + bot names ONLY (PLAN §12). */
+.pixel-font {
+  font-family: 'Press Start 2P', monospace;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+}
+
+/* Optional CRT scanline overlay — settings toggle, default OFF (Phase 6). */
 .scanlines {
   position: fixed;
   inset: 0;
@@ -66,117 +59,37 @@ body {
   mix-blend-mode: multiply;
 }
 
-.scanlines::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    transparent 55%,
-    rgba(0, 0, 0, 0.45) 100%
-  );
-}
-
-/* --- Neon glow -------------------------------------------------------- */
-.glow {
-  text-shadow:
-    0 0 4px currentColor,
-    0 0 8px currentColor;
-}
-
-.glow-soft {
-  text-shadow: 0 0 3px currentColor;
-}
-
-.glow-box {
-  box-shadow:
-    0 0 4px currentColor,
-    0 0 10px currentColor;
-}
-
-/* --- Pixel border with stepped corners -------------------------------- */
-.pixel-border {
-  border: 2px solid var(--neon-cyan);
-  clip-path: polygon(
-    0 4px, 4px 4px, 4px 0,
-    calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px,
-    100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%,
-    4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px)
-  );
-}
-
-.pixel-border-magenta { border-color: var(--neon-magenta); }
-.pixel-border-green   { border-color: var(--neon-green); }
-.pixel-border-red     { border-color: var(--neon-red); }
-.pixel-border-amber   { border-color: var(--neon-amber); }
-.pixel-border-purple  { border-color: var(--neon-purple); }
-
-/* --- Font utilities --------------------------------------------------- */
-.pixel-font {
-  font-family: 'Press Start 2P', monospace;
-  letter-spacing: 0.05em;
-  line-height: 1.4;
-}
-
-.vt-font {
-  font-family: 'VT323', monospace;
-  letter-spacing: 0.02em;
-  line-height: 1.2;
-}
-
-.sans-pixel-font {
-  font-family: 'Pixelify Sans', sans-serif;
-}
-
-/* --- Blinking cursor for live indicators ------------------------------ */
-@keyframes pixel-blink {
-  0%, 49%   { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-
-.blink {
-  animation: pixel-blink 1s steps(2) infinite;
-}
-
-/* --- Square all shadcn/radix-style inputs ----------------------------- */
 button,
 input,
 select,
 textarea {
-  border-radius: 0 !important;
+  border-radius: 0;
   font-family: inherit;
 }
 
 input,
 select,
 textarea {
-  background: var(--bg-terminal);
-  border: 2px solid var(--border-dim);
-  color: var(--text-primary);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--fg);
   padding: 0.5rem 0.75rem;
   outline: none;
-  transition: border-color 80ms steps(2);
 }
 
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--neon-cyan);
-  box-shadow: 0 0 6px var(--neon-cyan);
+  border-color: var(--cyan);
 }
 
-/* --- Scrollbar theming ------------------------------------------------ */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-terminal);
+  background: var(--panel);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-dim);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--neon-magenta);
+  background: var(--border);
 }

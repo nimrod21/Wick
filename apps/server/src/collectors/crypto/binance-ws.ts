@@ -18,7 +18,7 @@ import type {
   PriceCandleEvent,
   Timeframe,
   TradeTickEvent,
-} from '@cockpit/shared';
+} from '@wick/shared';
 import { db } from '../../db/client.js';
 import { eventBus } from '../../core/event-bus.js';
 import { logger } from '../../util/logger.js';

@@ -1,6 +1,7 @@
 import type { AssetId } from './assets.js';
 
-export type BrokerName = 'paper' | 'ccxt' | 'alpaca';
+// Phase 2 rewires this — paper is the only broker in Wick (no live execution).
+export type BrokerName = 'paper';
 export type OrderSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit' | 'stop';
 export type OrderStatus =

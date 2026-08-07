@@ -8,7 +8,7 @@
  * and fills when the candle crosses it.
  *
  * Accounting:
- *   - Fees: 0.1% taker for crypto, 0% for stocks/etfs (matches Binance / Alpaca).
+ *   - Fees: 0.1% taker (matches Binance spot).
  *   - Weighted-avg entry price when scaling in; realized PnL on closing fills.
  *   - Balances for each broker ('paper_balance_crypto' / 'paper_balance_stocks')
  *     live in `kv`; first access seeds $100k. Balances move as: cash -> qty
@@ -27,7 +27,7 @@ import type {
   OrderType,
   PlaceOrderRequest,
   Position,
-} from '@cockpit/shared';
+} from '@wick/shared';
 import { db } from '../db/client.js';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';

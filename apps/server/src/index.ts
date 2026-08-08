@@ -28,6 +28,8 @@ import {
 } from './market/indicator-engine.js';
 import { setMarketWarm } from './market/market-state.js';
 import { startScheduler, stopScheduler } from './jobs/scheduler.js';
+import { startEquityCron, stopEquityCron } from './paper/engine.js';
+import { startProtector, stopProtector } from './paper/protector.js';
 
 function ensureMasterKey(): void {
   if (config.masterKey && config.masterKey.length >= 32) return;
@@ -87,6 +89,8 @@ async function main(): Promise<void> {
   //    marketWarm, and run one full indicator pass so /api/market/indicators
   //    answers immediately.
   startScheduler();
+  startEquityCron();
+  startProtector(); // arms its SL/TP index once marketWarm fires below
   await startBinanceWs();
   void (async () => {
     try {
@@ -104,6 +108,8 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'shutdown requested');
     try {
       stopScheduler();
+      stopProtector();
+      stopEquityCron();
       stopIndicatorEngine();
       await stopBinanceWs();
       await app.close();

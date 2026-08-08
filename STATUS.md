@@ -6,7 +6,7 @@
 
 - [x] Phase 0 — Reset & carve-out
 - [x] Phase 1 — Market data & indicators (this wave; 12h soak + WS-drop heal not yet exercised)
-- [ ] Phase 2 — Paper trading engine
+- [x] Phase 2 — Paper trading engine
 - [x] Phase 3 — LLM provider layer (keys not yet registered — router skips keyless providers; stub + Ollama are the offline paths)
 - [ ] Phase 4 — Bots + trigger engine
 - [ ] Phase 5 — Learning & memory
@@ -55,6 +55,38 @@
   from the old collector was dropped — nothing in the plan consumes it.
 - Hourly self-heal at :07 counts missing recent buckets per (symbol × tf) and
   REST-backfills the window when any are missing.
+
+## Phase 2 notes / decisions
+
+- New `apps/server/src/paper/` (engine, protector, risk-guards); old `execution/` deleted
+  (it targeted legacy tables — kv/orders/candles_1m — only the weighted-avg-entry pattern
+  survived, rewritten bot-scoped).
+- Buy accounting: qty = notional/mid, fill price = mid×(1+slip); cash −= notional + slip + fee
+  (fee 0.1% and slip 0.05% both on pre-slip notional; slip ×2 inside a volatility window —
+  `setVolatilityWindow(symbol, untilTs)` is the Phase 4 hook, default off). Sell mirrors.
+  Dust: a partial sell leaving < $0.50 closes the position fully.
+- `fill` event kind added to `@wick/shared` events (carries reason 'trade'|'sl'|'tp').
+  Fills table has no reason column (schema per PLAN §6) — reason lives on the event and in
+  the protector's synthetic decision `trigger_detail` (`sl:SYMBOL@tick level=stop`).
+- Guards: pure `checkAndClamp(bot, decision, state)`; state assembled by
+  `engine.buildGuardState(botId, symbol)`. "One position per symbol" is enforced as
+  buy-while-holding → veto (no LLM adds); `tradesToday` counts all fills since UTC midnight
+  (protector exits included — conservative). Cash clamp keeps 1.002 headroom so a passed
+  buy can never hit the engine's insufficient_cash rejection.
+- Guards tests: plain tsx + node:assert (`scripts/test-guards.ts`, 27 asserts) — vitest is
+  not in the workspace and wasn't trivially addable, per IMPL-2 acceptance note.
+- Dev CLI (`pnpm paper buy|sell|status|snapshot`): talks to the live server DB directly
+  (WAL, second process) and primes the engine price chain with a Binance REST price
+  (`primeMid`, 30s TTL) since the CLI process has no WS. Engine mid chain:
+  WS last trade → primed REST → newest 1m candle close. CLI bypasses guards by design
+  (harness must set e.g. 0.1% SLs that the clamp forbids).
+- Protector: tick-driven same-tick exits; index rebuilt from `positions` on boot, armed only
+  after marketWarm; plus a 5s index reconcile from DB so positions written by another
+  process (the CLI) get armed — breach detection itself is never polled.
+- Known issue (pre-existing, not Phase 2): the dev logger's pino-pretty worker-thread
+  transport can crash the process when stdout is redirected to a file
+  ("Emitted 'error' event on ThreadStream"). `NODE_ENV=production` (plain pino) is immune;
+  pm2/Phase 7 runs production anyway.
 
 ## Blockers
 

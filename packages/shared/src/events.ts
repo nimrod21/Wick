@@ -73,6 +73,24 @@ export type OrderStatusEvent = BaseEvent & {
   avgFillPrice: number | null;
 };
 
+/**
+ * Paper-engine fill (mirrors a `fills` row). reason: 'trade' for
+ * LLM/CLI-driven fills, 'sl'|'tp' when the code protector fired.
+ */
+export type FillEvent = BaseEvent & {
+  kind: 'fill';
+  botId: number;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  price: number;          // executed price incl. slippage
+  fee: number;            // USD
+  slip: number;           // USD
+  notional: number;       // qty × mid (pre-slip), USD
+  reason: 'trade' | 'sl' | 'tp';
+  decisionId: number | null;
+};
+
 export type Event =
   | TickEvent
   | CandleEvent
@@ -80,6 +98,7 @@ export type Event =
   | FundingEvent
   | FearGreedEvent
   | MarketWarmEvent
+  | FillEvent
   | OrderStatusEvent;
 
 export type EventKind = Event['kind'];
@@ -91,5 +110,6 @@ export const VALID_EVENT_KINDS: readonly EventKind[] = [
   'funding',
   'fear_greed',
   'market_warm',
+  'fill',
   'order_status',
 ];

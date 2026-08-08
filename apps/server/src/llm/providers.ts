@@ -25,11 +25,13 @@ export interface ProviderRecord {
 
 /** Fallbacks only — mirrors the migrate-time seed. Settings win. */
 export const PROVIDER_DEFAULTS: ProviderRecord[] = [
-  { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['deepseek/deepseek-chat-v3-0324:free'], rpm: 20, rpd: 50, enabled: true },
+  // Model IDs verified live 2026-08-08 — they rot; when a provider 404s, re-check its /models endpoint.
+  { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'], rpm: 20, rpd: 50, enabled: true },
   { id: 'groq', baseUrl: 'https://api.groq.com/openai/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['llama-3.3-70b-versatile'], rpm: 30, rpd: 1000, enabled: true },
-  { id: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', authStyle: 'gemini-header', adapter: 'gemini', models: ['gemini-2.5-flash-lite'], rpm: 15, rpd: 1000, enabled: true },
+  { id: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', authStyle: 'gemini-header', adapter: 'gemini', models: ['gemini-3.6-flash', 'gemini-3.5-flash-lite'], rpm: 15, rpd: 1000, enabled: true },
   { id: 'mistral', baseUrl: 'https://api.mistral.ai/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['mistral-small-latest'], rpm: 60, rpd: 500, enabled: true },
-  { id: 'cerebras', baseUrl: 'https://api.cerebras.ai/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['llama-3.3-70b'], rpm: 30, rpd: 1000, enabled: true },
+  // Cerebras chat API now returns payment_required on free accounts (2026-08) — disabled by default.
+  { id: 'cerebras', baseUrl: 'https://api.cerebras.ai/v1', authStyle: 'bearer', adapter: 'openai-compat', models: ['gpt-oss-120b', 'zai-glm-4.7'], rpm: 30, rpd: 1000, enabled: false },
   { id: 'ollama', baseUrl: 'http://localhost:11434/v1', authStyle: 'none', adapter: 'openai-compat', models: [], rpm: 600, rpd: 100000, enabled: false },
 ];
 

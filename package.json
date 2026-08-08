@@ -1,29 +1,29 @@
 {
-  "name": "trading-cockpit",
+  "name": "wick",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev":          "pnpm -r --parallel dev",
-    "dev:server":   "pnpm --filter @cockpit/server dev",
-    "dev:web":      "pnpm --filter @cockpit/web dev",
+    "dev:server":   "pnpm --filter @wick/server dev",
+    "dev:web":      "pnpm --filter @wick/web dev",
     "build":        "pnpm -r build",
     "typecheck":    "pnpm -r typecheck",
-    "migrate":      "pnpm --filter @cockpit/server migrate",
+    "migrate":      "pnpm --filter @wick/server migrate",
+    "ask":          "tsx scripts/ask.ts",
+    "keys":         "tsx scripts/keys.ts",
+    "paper":        "tsx scripts/paper.ts",
     "pm2:start":    "pm2 start ecosystem.config.cjs",
-    "pm2:stop":     "pm2 stop cockpit-server",
-    "pm2:logs":     "pm2 logs cockpit-server",
-    "pm2:status":   "pm2 status",
-    "probe":        "tsx scripts/probe/run.ts"
+    "pm2:stop":     "pm2 stop wick-server",
+    "pm2:logs":     "pm2 logs wick-server",
+    "pm2:status":   "pm2 status"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
-    "ws": "^8.18.0",
-    "yahoo-finance2": "^2.13.0",
-    "rss-parser": "^3.13.0"
+    "ws": "^8.18.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]

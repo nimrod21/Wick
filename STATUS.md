@@ -1,71 +1,124 @@
-# Cockpit Status
+# Wick — Status
 
-**Current phase:** Phase 1 — Backbone (exit-ready)
-**Last commit:** `a083d4b` — Phase 1 Wave 2
-**Updated:** 2026-04-18
+**Current phase:** 1 — Market data & indicators (done; 12h soak pending)
 
 ## Phase checklist
-- [x] Phase 0 — Preflight + Spike (via wsskill 3 waves)
-- [x] Phase 1 — Backbone (via wsskill 3 waves)  ← just finished, Wave 3 pending commit
-- [ ] Phase 2 — Crypto trading tab  ← next
-- [ ] Phase 3 — Non-crypto trading tabs
-- [ ] Phase 4 — Whale tracker
-- [ ] Phase 5 — News
-- [ ] Phase 6 — Indicators
-- [ ] Phase 7 — Dashboard + probability engine
-- [ ] Phase 8 — Alerts
-- [ ] Phase 9 — Execution (paper)
-- [ ] Phase 10 — Execution (live crypto)
 
-## Active blockers
-- None for Phase 2, but see *Environment notes* below.
+- [x] Phase 0 — Reset & carve-out
+- [x] Phase 1 — Market data & indicators (this wave; 12h soak + WS-drop heal not yet exercised)
+- [x] Phase 2 — Paper trading engine
+- [x] Phase 3 — LLM provider layer (keys not yet registered — router skips keyless providers; stub + Ollama are the offline paths)
+- [ ] Phase 4 — Bots + trigger engine
+- [ ] Phase 5 — Learning & memory
+- [ ] Phase 6 — UI
+- [ ] Phase 7 — Hardening & service
 
-## Environment notes (IMPORTANT)
+## Environment notes
 
-- **Node 22 LTS required.** Node 24 was initially installed (v24.13.1) but `better-sqlite3` v12.9.0 prebuilt for Node 24 (`node-v137-win32-x64`) is consistently returning HTTP 504 from GitHub's binary CDN — even though the asset exists. PLAN.md §18 #15 documented this fallback risk.
-- **Node 22.22.2 portable** is installed at `D:/Claude/Tools/node-v22/`. Prepend this to `PATH` before running `pnpm` / `node` / `pm2` for this project:
-  ```bash
-  export PATH="/d/Claude/Tools/node-v22:$PATH"
-  ```
-- For persistent switching, install `nvm-windows` later (https://github.com/coreybutler/nvm-windows) and do `nvm install 22 && nvm use 22`.
-- `better-sqlite3` bumped from `^11.3.0` → `^12.9.0` (only v12 has Node 24 prebuilts; on Node 22 either works fine).
-- `@fastify/sse-v2` in PLAN.md §6 is wrong — correct package is `fastify-sse-v2` (community plugin). Fixed in code; plan could be updated later.
+- Node 22 LTS required (better-sqlite3 breaks on Node 24). Portable install:
+  `D:/Claude/Tools/node-v22` — `export PATH="/d/Claude/Tools/node-v22:$PATH"`.
+- Server binds `127.0.0.1:3001`; web dev on `127.0.0.1:3000`.
+- DB: `apps/server/data/wick.db` (WAL). Fresh schema `001_wick.sql`; migrate seeds
+  the 7-symbol watchlist + default settings (guards, trigger thresholds, provider registry).
+- Master key env var: `WICK_MASTER_KEY` (auto-generated into `.env` on first boot).
 
-## API keys status
-Tier 0 (no key needed, already working): Binance public, Yahoo, RSS, alternative.me F&G, Blockstream, public Solana RPC, CoinGecko.
+## Phase 0 notes / decisions
 
-Tier 1 — user to register when convenient (all Settings-page-manageable already):
-- [ ] Twelve Data — https://twelvedata.com/register
-- [ ] Finnhub — https://finnhub.io/register
-- [ ] Etherscan — https://etherscan.io/register
-- [ ] Helius (Solana) — https://helius.dev
-- [ ] CryptoPanic — https://cryptopanic.com/developers/api
-- [ ] FRED — https://fred.stlouisfed.org/docs/api/api_key.html
+- Collectors (Binance WS/REST, fear-greed, funding-oi, scheduler, indicator cron) are
+  kept but NOT started from `index.ts` — Phase 1 re-enables them against the new schema.
+- `paper-mode.ts` / `order-manager.ts` / `risk-guards.ts` kept as adaptation bases;
+  they still reference legacy tables (kv, orders, candles_1m, positions-by-asset_id)
+  and are not exercised at runtime — Phase 2 rewires them.
+- Vault keys now live in the `settings` table (`apikey.<provider>` rows, same AES-GCM
+  format); the old `api_keys` table is gone.
+- Web app gutted to a shell: `/` WICK placeholder, `/settings` placeholder, palette
+  tokens in `globals.css`. Phase 6 rebuilds all pages.
 
-Tier 2 — deferred to their phases:
-- [ ] Alpaca paper (Phase 9) — https://alpaca.markets/paper
-- [ ] Binance trading (Phase 10 — only if live trading enabled)
+## Phase 1 notes / decisions
 
-## Smoke test results (Phase 1)
+- **15m/4h/1d update strategy: periodic REST refresh** (not aggregation). A 5-min cron
+  re-fetches the last 2 klines per (symbol × 15m/4h/1d) and upserts the closed ones —
+  exact Binance values, no aggregation drift, ~21 requests/5 min. WS streams cover 1m/1h.
+- Only CLOSED klines are ever persisted to `candles`; forming candles reach the UI as
+  `candle` events with `closed:false`.
+- Boot sequence: scheduler (funding+F&G polls kick immediately) → WS connect (closed
+  klines buffered) → REST backfill 500/(symbol×tf) (~15 s for 35 requests) → buffer
+  flush → `marketWarm` flag+event → indicator engine subscribe + one full compute pass.
+  The boot pass is standard behaviour, so indicators are queryable right after any boot.
+- Indicator names (Phase 5 joins on these 1:1): `rsi14, ema_trend, macd, bollinger,
+  atr14, volume_ratio, funding, fear_greed` — vote rules live in `INDICATOR_DEFS`
+  (apps/server/src/market/indicator-engine.ts), computed on 1h close only.
+- API: `/api/market/candles`, `/api/market/indicators`, `/api/market/summary`;
+  SSE moved to `/api/sse` (ticks throttled ≤2/s per symbol per connection).
+- Funding polled 15-min for all 7 symbols (fapi premiumIndex); F&G daily; both cached
+  in memory only (latest value queryable, staleness tolerated silently). OI polling
+  from the old collector was dropped — nothing in the plan consumes it.
+- Hourly self-heal at :07 counts missing recent buckets per (symbol × tf) and
+  REST-backfills the window when any are missing.
 
-| Check | Result |
-|---|---|
-| `pnpm install` | ✅ clean under Node 22 |
-| `pnpm typecheck` (all 3 packages) | ✅ clean |
-| `pnpm --filter @cockpit/server build` | ✅ emits dist/ |
-| `pnpm migrate` | ✅ 001_initial.sql applies; idempotent |
-| SQLite tables created | ✅ 22 tables (all from PLAN.md §8) |
-| Server starts on 127.0.0.1:3001 | ✅ |
-| `GET /health` | ✅ 200 `{"ok":true,"ts":...}` |
-| `GET /api/assets?type=crypto` | ✅ returns 7 seeded pairs |
-| Seed loader | ✅ 23 assets inserted on first run, skipped on restart |
-| SSE `/stream` hello frame | ✅ `event: hello` received |
-| PM2 installed | ✅ pm2 6.0.14 under Node 22 |
+## Phase 2 notes / decisions
 
-## Notes for next session
+- New `apps/server/src/paper/` (engine, protector, risk-guards); old `execution/` deleted
+  (it targeted legacy tables — kv/orders/candles_1m — only the weighted-avg-entry pattern
+  survived, rewritten bot-scoped).
+- Buy accounting: qty = notional/mid, fill price = mid×(1+slip); cash −= notional + slip + fee
+  (fee 0.1% and slip 0.05% both on pre-slip notional; slip ×2 inside a volatility window —
+  `setVolatilityWindow(symbol, untilTs)` is the Phase 4 hook, default off). Sell mirrors.
+  Dust: a partial sell leaving < $0.50 closes the position fully.
+- `fill` event kind added to `@wick/shared` events (carries reason 'trade'|'sl'|'tp').
+  Fills table has no reason column (schema per PLAN §6) — reason lives on the event and in
+  the protector's synthetic decision `trigger_detail` (`sl:SYMBOL@tick level=stop`).
+- Guards: pure `checkAndClamp(bot, decision, state)`; state assembled by
+  `engine.buildGuardState(botId, symbol)`. "One position per symbol" is enforced as
+  buy-while-holding → veto (no LLM adds); `tradesToday` counts all fills since UTC midnight
+  (protector exits included — conservative). Cash clamp keeps 1.002 headroom so a passed
+  buy can never hit the engine's insufficient_cash rejection.
+- Guards tests: plain tsx + node:assert (`scripts/test-guards.ts`, 27 asserts) — vitest is
+  not in the workspace and wasn't trivially addable, per IMPL-2 acceptance note.
+- Dev CLI (`pnpm paper buy|sell|status|snapshot`): talks to the live server DB directly
+  (WAL, second process) and primes the engine price chain with a Binance REST price
+  (`primeMid`, 30s TTL) since the CLI process has no WS. Engine mid chain:
+  WS last trade → primed REST → newest 1m candle close. CLI bypasses guards by design
+  (harness must set e.g. 0.1% SLs that the clamp forbids).
+- Protector: tick-driven same-tick exits; index rebuilt from `positions` on boot, armed only
+  after marketWarm; plus a 5s index reconcile from DB so positions written by another
+  process (the CLI) get armed — breach detection itself is never polled.
+- Known issue (pre-existing, not Phase 2): the dev logger's pino-pretty worker-thread
+  transport can crash the process when stdout is redirected to a file
+  ("Emitted 'error' event on ThreadStream"). `NODE_ENV=production` (plain pino) is immune;
+  pm2/Phase 7 runs production anyway.
 
-1. **Prepend Node 22 to PATH** before running any `pnpm`/`pm2` command: `export PATH="/d/Claude/Tools/node-v22:$PATH"`.
-2. **Phase 2 starts next** — open `IMPL-2-TRADING.md`. Phase 2 adds Binance WS collector, historical backfill, trading-tab UI components. Builds on the Phase 1 backbone.
-3. **Browser verification still pending** — Phase 1 typecheck is clean but nobody has opened `http://127.0.0.1:3000/` in an actual browser yet. Recommended first step for Phase 2: manual visual smoke test of all tab routes with pixel 80s theme before writing new code.
-4. **Heartbeat event verified structurally** but full 10s heartbeat wasn't observed in short smoke tests. Any SSE issue noticed during Phase 2 should re-test this.
-5. **data/ folder contains cockpit.db** after migration. Gitignored. Safe to delete for a fresh start (`rm -rf apps/server/data/cockpit.db`).
+## Blockers
+
+- None.
+
+## Phase 3 notes / decisions (LLM provider layer)
+
+- **No new dependencies.** `zod` was added to `packages/shared/package.json`
+  (required for the Decision contract living in shared per PLAN §7) — same
+  version already in the workspace lockfile via the server, only a link, not
+  a new install.
+- Decision contract: `packages/shared/src/decision.ts` (`DecisionSchema`,
+  `Decision`, `parseDecision`). Coerces "82%"→82, "BUY"→"buy", string
+  numbers, missing optionals→null; buy/sell require symbol+size_pct.
+- Router: `llm/router.ts` `decide(botCtx, snapshot, opts?)` → `{decision,
+  provider, model, latencyMs} | {failed, reason}`; never throws. Providers
+  with no vault key are SKIPPED silently (no error rows) until Luka
+  registers keys — Ollama (authStyle 'none') and the stub need none.
+  Malformed-after-repair marks an `llm_usage` error (PLAN §7 rule 2).
+- Gemini adapter always folds system into the first user turn (some free
+  models reject system role — deterministic beats conditional).
+- Quota: `llm/quota.ts` — llm_usage-backed UTC daily counters + in-memory
+  rpm token bucket; `poolRemaining()` ready for the Phase-4 budget gate.
+- Snapshot builder `llm/snapshot.ts`: `buildSnapshot(symbol, botState?)`;
+  bot-less callers get placeholder account/lessons, weights 1.0 / hit-rate
+  n/a until Phase 5.
+- CLI: `pnpm ask --symbol BTCUSDT [--provider groq|stub] [--dry]`,
+  `pnpm keys set llm.<provider>.key <value>` / `pnpm keys list` (writes the
+  same `apikey.<provider>` vault rows `config.getApiKey()` reads).
+- Tests: `pnpm tsx scripts/test-llm.ts` — 20 asserts (rotation, quota
+  rollover, parse/repair/fail-over, coercion, golden prompt). Golden file:
+  `apps/server/src/llm/golden/prompt.golden.txt` (regen `UPDATE_GOLDEN=1`).
+- Provider signup/setup doc: `apps/server/src/llm/README-setup.md`.
+- Ollama was NOT running during this phase's verification — end-to-end ran
+  via the stub adapter; `ask` probes :11434 each run and auto-enables it.

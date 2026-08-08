@@ -1,5 +1,5 @@
 {
-  "name": "@cockpit/shared",
+  "name": "@wick/shared",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

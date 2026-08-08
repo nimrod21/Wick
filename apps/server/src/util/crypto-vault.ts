@@ -13,7 +13,7 @@ export interface Sealed {
 function getKey(): Buffer {
   const masterKey = config.masterKey;
   if (!masterKey) {
-    throw new Error('crypto-vault: COCKPIT_MASTER_KEY is not set');
+    throw new Error('crypto-vault: WICK_MASTER_KEY is not set');
   }
   return crypto.createHash('sha256').update(masterKey, 'utf8').digest();
 }

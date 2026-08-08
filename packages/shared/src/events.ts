@@ -1,81 +1,66 @@
 import type { AssetId, Timeframe } from './assets.js';
 import type { OrderStatus } from './orders.js';
 
+export type Vote = 'bull' | 'bear' | 'neutral';
+
 export type BaseEvent = {
   id: number;
-  ts: number;                 // unix seconds UTC
+  ts: number;                 // UTC unix milliseconds
   source: string;
   severity?: number;          // 0..100
 };
 
-export type PriceCandleEvent = BaseEvent & {
-  kind: 'candle';
-  assetId: AssetId;
-  timeframe: Timeframe;
-  o: number; h: number; l: number; c: number; v: number;
-};
-
-export type WhaleTxEvent = BaseEvent & {
-  kind: 'whale_tx';
-  chain: 'eth' | 'sol' | 'btc';
-  address: string;
-  direction: 'in' | 'out';
-  token: string;
-  amount: number;
-  usdValue: number;
-  counterpart?: string;
-  txHash: string;
-  label?: string;
-};
-
-export type NewsEvent = BaseEvent & {
-  kind: 'news';
-  title: string;
-  url: string;
-  summary?: string;
-  tickers: string[];
-  sentiment?: number;         // -1..+1
-};
-
-export type IndicatorEvent = BaseEvent & {
-  kind: 'indicator';
-  name: string;
-  value: number;
-  previous?: number;
-  delta?: number;
-};
-
-export type AlertEvent = BaseEvent & {
-  kind: 'alert';
-  ruleId: number;
-  ruleName: string;
-  payload: unknown;
-};
-
-export type TradeTickEvent = BaseEvent & {
-  kind: 'trade_tick';
-  assetId: AssetId;
+/** Live trade tick (from Binance @trade stream). Not persisted. */
+export type TickEvent = BaseEvent & {
+  kind: 'tick';
+  symbol: string;
   price: number;
   qty: number;
   side: 'buy' | 'sell';
 };
 
-export type OrderbookLevel = [price: number, qty: number];
-
-export type OrderbookEvent = BaseEvent & {
-  kind: 'orderbook';
-  assetId: AssetId;
-  bids: OrderbookLevel[];
-  asks: OrderbookLevel[];
+/**
+ * Candle event. `closed: true` means the kline is final and has been
+ * persisted to the `candles` table; `closed: false` is a forming candle
+ * (UI updates only — never persisted, never used for indicators).
+ * `ts` is the candle OPEN time (ms).
+ */
+export type CandleEvent = BaseEvent & {
+  kind: 'candle';
+  symbol: string;
+  tf: Timeframe;
+  o: number; h: number; l: number; c: number; v: number;
+  closed: boolean;
 };
 
-export type ProbabilityEvent = BaseEvent & {
-  kind: 'probability';
-  assetId: AssetId;
-  horizon: '1h' | '4h' | '24h';
-  bullishProb: number;
-  confidence: number;
-  // contributingSignals omitted from streamed event for size; re-fetch via API if needed
+/** Computed indicator row (mirrors `indicator_values`). vote null = no directional read (e.g. ATR). */
+export type IndicatorEvent = BaseEvent & {
+  kind: 'indicator';
+  symbol: string;
+  tf: Timeframe;
+  name: string;
+  value: number | null;
+  vote: Vote | null;
+};
+
+/** Funding-rate poll result (fapi.binance.com premiumIndex). rate is a fraction (0.0001 = 0.01%). */
+export type FundingEvent = BaseEvent & {
+  kind: 'funding';
+  symbol: string;
+  rate: number;
+  nextFundingTime: number;
+};
+
+/** Fear & Greed index poll result (alternative.me). */
+export type FearGreedEvent = BaseEvent & {
+  kind: 'fear_greed';
+  value: number;
+  classification: string;
+};
+
+/** Fired once per boot when historical backfill completes (PLAN §16.9). */
+export type MarketWarmEvent = BaseEvent & {
+  kind: 'market_warm';
 };
 
 export type OrderStatusEvent = BaseEvent & {
@@ -88,27 +73,43 @@ export type OrderStatusEvent = BaseEvent & {
   avgFillPrice: number | null;
 };
 
+/**
+ * Paper-engine fill (mirrors a `fills` row). reason: 'trade' for
+ * LLM/CLI-driven fills, 'sl'|'tp' when the code protector fired.
+ */
+export type FillEvent = BaseEvent & {
+  kind: 'fill';
+  botId: number;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  price: number;          // executed price incl. slippage
+  fee: number;            // USD
+  slip: number;           // USD
+  notional: number;       // qty × mid (pre-slip), USD
+  reason: 'trade' | 'sl' | 'tp';
+  decisionId: number | null;
+};
+
 export type Event =
-  | PriceCandleEvent
-  | WhaleTxEvent
-  | NewsEvent
+  | TickEvent
+  | CandleEvent
   | IndicatorEvent
-  | AlertEvent
-  | TradeTickEvent
-  | OrderbookEvent
-  | ProbabilityEvent
+  | FundingEvent
+  | FearGreedEvent
+  | MarketWarmEvent
+  | FillEvent
   | OrderStatusEvent;
 
 export type EventKind = Event['kind'];
 
 export const VALID_EVENT_KINDS: readonly EventKind[] = [
+  'tick',
   'candle',
-  'whale_tx',
-  'news',
   'indicator',
-  'alert',
-  'trade_tick',
-  'orderbook',
-  'probability',
+  'funding',
+  'fear_greed',
+  'market_warm',
+  'fill',
   'order_status',
 ];

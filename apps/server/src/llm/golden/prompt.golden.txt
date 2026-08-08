@@ -1,0 +1,75 @@
+── SYSTEM ──
+You are "Golden Test Bot", an autonomous crypto paper-trading bot. Personality: Patient swing trader; prefers strong confluence and hates chop.
+
+HARD RULES:
+- The default action is "wait". Most of the time the right move is to do nothing.
+- Trade only with confidence >= 65. Below that, output "wait".
+- You win by being right, not by being busy.
+- Fees are 0.10% per side plus ~0.05% slippage; a round trip costs ~0.30% — a trade must clear that just to break even.
+
+OUTPUT: reply with ONLY one JSON object, no prose, no markdown fences, exactly this shape:
+{"action":"buy"|"sell"|"wait","symbol":string|null,"size_pct":number|null,"confidence":number,"reasoning":string,"sl_pct":number|null,"tp_pct":number|null}
+- symbol + size_pct required for buy/sell. size_pct: buy = % of cash, sell = % of position, 1-100.
+- confidence: 0-100. reasoning: <= 400 chars.
+- sl_pct/tp_pct: optional per-position overrides (sl negative e.g. -5, tp positive e.g. 10); null to use defaults.
+── USER ──
+Woken by: RSI(1h) crossed 70 on BTCUSDT.
+Symbol in focus: BTCUSDT. Snapshot time: 08-02 00:00 UTC.
+
+1h candles, oldest first (24 of last 24; time o/h/l/c/vol):
+08-01 00:00 43000.0/43180.0/42850.0/43060.0/1200
+08-01 01:00 43140.9/43320.9/42990.9/43200.9/1217
+08-01 02:00 43267.3/43447.3/43117.3/43327.3/1234
+08-01 03:00 43366.6/43546.6/43216.6/43426.6/1251
+08-01 04:00 43428.8/43608.8/43278.8/43488.8/1268
+08-01 05:00 43448.2/43628.2/43298.2/43508.2/1285
+08-01 06:00 43423.7/43603.7/43273.7/43483.7/1302
+08-01 07:00 43359.2/43539.2/43209.2/43419.2/1319
+08-01 08:00 43262.9/43442.9/43112.9/43322.9/1336
+08-01 09:00 43146.4/43326.4/42996.4/43206.4/1353
+08-01 10:00 43023.8/43203.8/42873.8/43083.8/1370
+08-01 11:00 42909.5/43089.5/42759.5/42969.5/1387
+08-01 12:00 42817.3/42997.3/42667.3/42877.3/1404
+08-01 13:00 42758.4/42938.4/42608.4/42818.4/1421
+08-01 14:00 42740.4/42920.4/42590.4/42800.4/1438
+08-01 15:00 42766.4/42946.4/42616.4/42826.4/1455
+08-01 16:00 42834.7/43014.7/42684.7/42894.7/1472
+08-01 17:00 42938.7/43118.7/42788.7/42998.7/1489
+08-01 18:00 43068.2/43248.2/42918.2/43128.2/1506
+08-01 19:00 43210.1/43390.1/43060.1/43270.1/1523
+08-01 20:00 43349.7/43529.7/43199.7/43409.7/1540
+08-01 21:00 43472.8/43652.8/43322.8/43532.8/1557
+08-01 22:00 43567.0/43747.0/43417.0/43627.0/1574
+08-01 23:00 43623.0/43803.0/43473.0/43683.0/1591
+
+Indicators (1h; weight = learned trust, hit-rate = historical accuracy):
+- atr14=312.44 vote=none weight=1 hit-rate=n/a
+- bollinger=0.82 vote=neutral weight=1 hit-rate=52%
+- ema_trend=1.63 vote=bull weight=1.25 hit-rate=58%
+- fear_greed=71 vote=bear weight=0.75 hit-rate=44%
+- funding=0.01 vote=neutral weight=1 hit-rate=n/a
+- macd=55.20 vote=bull weight=1.10 hit-rate=55%
+- rsi14=63.10 vote=neutral weight=1 hit-rate=50%
+- volume_ratio=1.90 vote=bull weight=0.90 hit-rate=48%
+- funding=0.0120%
+- fear_greed=71
+
+Open position: 0.002300 BTCUSDT @ avg 42800.0, unrealized P&L 1.42%, stop 40660.0, tp 47080.0.
+Account: cash $612.40, equity $1012.77, drawdown 3.8% from high-water mark.
+Fee drag (7d): $4.12 paid in fees vs $18.60 gross P&L.
+
+Your last 5 decisions (newest first; outcome = 4h forward return, score in [-1,1]):
+- 08-01 23:00 wait conf 40 [executed] → outcome pending
+- 08-01 20:00 buy BTCUSDT 40% conf 72 [executed] → 4h ret 1.10%, score 0.30
+- 08-01 16:00 wait conf 55 [executed] → 4h ret 0.10%, score 0.30
+- 08-01 12:00 buy SOLUSDT 25% conf 68 [vetoed] → 4h ret -0.90%, score 0
+- 08-01 08:00 sell ETHUSDT 100% conf 70 [executed] → 4h ret -2.10%, score 1
+
+Standing lessons from your own trading history:
+- Volume spikes without EMA confluence have been losing trades — skip them.
+- Funding above 0.05% has preceded pullbacks; be wary of longs there.
+- Waiting through chop scored well; do not force trades in tight ranges.
+
+Guard state: 3 trades left today, cooldown 12min remaining.
+
+Decide now. JSON only.

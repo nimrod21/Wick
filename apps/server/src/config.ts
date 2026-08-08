@@ -20,7 +20,7 @@ const parsed = schema.parse({
   logLevel:
     (process.env.LOG_LEVEL as 'trace' | 'debug' | 'info' | 'warn' | 'error' | undefined) ??
     'info',
-  masterKey: process.env.COCKPIT_MASTER_KEY || undefined,
+  masterKey: process.env.WICK_MASTER_KEY || undefined,
 });
 
 export const config = parsed;
@@ -32,57 +32,35 @@ export type Config = typeof config;
  */
 export function setMasterKey(k: string): void {
   (config as { masterKey?: string }).masterKey = k;
-  process.env.COCKPIT_MASTER_KEY = k;
+  process.env.WICK_MASTER_KEY = k;
 }
 
 /**
- * Read an API key for `service`. Prefers encrypted row in `api_keys`;
- * falls back to `.env` (`${SERVICE_UPPER}_API_KEY` / `_API_SECRET`).
- * Returns null if neither source has a value.
- *
- * On-disk layout: `key_ciphertext` holds a single ciphertext whose plaintext
- * is either `key` or `key\u0000secret` when a secret exists. `secret_ciphertext`
- * is NULL in that case (flag preserved for legacy/other uses). `iv` and `tag`
- * are the AES-GCM nonce and auth tag for the single ciphertext.
+ * Read an encrypted API key stored in the `settings` table (Wick vault
+ * format: `apikey.<service>` → JSON {ct, iv, tag} base64). Falls back to
+ * `.env` (`${SERVICE_UPPER}_API_KEY`). Returns null when neither exists.
  */
-export function getApiKey(service: string): { key: string; secret?: string } | null {
+export function getApiKey(service: string): { key: string } | null {
   try {
     const row = db
-      .prepare(
-        'SELECT key_ciphertext, secret_ciphertext, iv, tag FROM api_keys WHERE service = ?',
-      )
-      .get(service) as
-      | {
-          key_ciphertext: Buffer;
-          secret_ciphertext: Buffer | null;
-          iv: Buffer;
-          tag: Buffer;
-        }
-      | undefined;
+      .prepare('SELECT value FROM settings WHERE key = ?')
+      .get(`apikey.${service}`) as { value: string } | undefined;
     if (row && config.masterKey) {
+      const blob = JSON.parse(row.value) as { ct: string; iv: string; tag: string };
       const plaintext = decrypt({
-        ciphertext: row.key_ciphertext,
-        iv: row.iv,
-        tag: row.tag,
+        ciphertext: Buffer.from(blob.ct, 'base64'),
+        iv: Buffer.from(blob.iv, 'base64'),
+        tag: Buffer.from(blob.tag, 'base64'),
       });
-      const sepIdx = plaintext.indexOf('\u0000');
-      if (sepIdx >= 0) {
-        return {
-          key: plaintext.slice(0, sepIdx),
-          secret: plaintext.slice(sepIdx + 1),
-        };
-      }
       return { key: plaintext };
     }
   } catch {
     // fall through to env fallback
   }
 
-  const upper = service.toUpperCase();
-  const envKey = process.env[`${upper}_API_KEY`];
-  const envSecret = process.env[`${upper}_API_SECRET`];
+  const envKey = process.env[`${service.toUpperCase()}_API_KEY`];
   if (envKey && envKey.length > 0) {
-    return { key: envKey, secret: envSecret || undefined };
+    return { key: envKey };
   }
   return null;
 }

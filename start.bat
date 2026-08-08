@@ -1,6 +1,6 @@
 @echo off
-title Trading Cockpit
-cd /d "D:\Claude\trading-cockpit"
+title Wick
+cd /d "D:\Projects\Wick"
 
 REM Portable Node 22 + pnpm global bin on PATH
 set "PATH=D:\Claude\Tools\node-v22;%APPDATA%\npm;%PATH%"
@@ -8,7 +8,7 @@ set "PATH=D:\Claude\Tools\node-v22;%APPDATA%\npm;%PATH%"
 if not exist "logs" mkdir logs
 
 echo ================================================
-echo   Trading Cockpit
+echo   Wick
 echo ================================================
 
 if not exist "node_modules" (
@@ -19,11 +19,11 @@ if not exist "node_modules" (
 
 if not exist "apps\server\dist\index.js" (
   echo Building server, one time only...
-  call pnpm --filter @cockpit/server build
+  call pnpm --filter @wick/server build
   if errorlevel 1 goto :fail
 )
 
-if not exist "apps\server\data\cockpit.db" (
+if not exist "apps\server\data\wick.db" (
   echo Initializing database...
   call pnpm migrate
   if errorlevel 1 goto :fail
@@ -36,7 +36,7 @@ echo Starting server (hidden)...
 for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process cmd -ArgumentList '/c','node apps\server\dist\index.js ^> logs\server.log 2^>^&1' -PassThru -WindowStyle Hidden).Id"') do set "SERVER_PID=%%P"
 
 echo Starting web (hidden)...
-for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process cmd -ArgumentList '/c','pnpm --filter @cockpit/web dev ^> logs\web.log 2^>^&1' -PassThru -WindowStyle Hidden).Id"') do set "WEB_PID=%%P"
+for /f "delims=" %%P in ('powershell -NoProfile -Command "(Start-Process cmd -ArgumentList '/c','pnpm --filter @wick/web dev ^> logs\web.log 2^>^&1' -PassThru -WindowStyle Hidden).Id"') do set "WEB_PID=%%P"
 
 echo server pid=%SERVER_PID%  web pid=%WEB_PID%
 echo Waiting 8 seconds for web to boot...
@@ -48,7 +48,7 @@ echo.
 echo ================================================
 echo   RUNNING
 echo   http://127.0.0.1:3000
-echo   Logs: D:\Claude\trading-cockpit\logs\
+echo   Logs: D:\Projects\Wick\logs\
 echo.
 echo   Press any key in THIS window to STOP.
 echo ================================================

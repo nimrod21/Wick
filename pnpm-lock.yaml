@@ -111,6 +111,9 @@ importers:
       tailwind-merge:
         specifier: ^2.5.0
         version: 2.6.1
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
       zustand:
         specifier: ^5.0.0
         version: 5.0.12(@types/react@19.2.14)(react@19.2.5)

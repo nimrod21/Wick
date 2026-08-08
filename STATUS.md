@@ -1,6 +1,6 @@
 # Wick — Status
 
-**Current phase:** 5 — Learning & memory (done; needs live decisions to accumulate)
+**Current phase:** 6 — UI (built + verified; **design/screenshot review with Luka still open**)
 
 ## Phase checklist
 
@@ -11,7 +11,8 @@
 - [x] Phase 4 — Bots + trigger engine (24h unattended soak deferred — needs provider keys)
 - [x] Phase 5 — Learning & memory (weights/lessons verified on seeded data — real
       accumulation needs bots deciding, i.e. provider keys)
-- [ ] Phase 6 — UI
+- [x] Phase 6 — UI (all four pages live over SSE; **design pass with Luka pending** —
+      screenshots in `D:/Claude/tempo/wick-phase6/`)
 - [ ] Phase 7 — Hardening & service
 
 ## Environment notes
@@ -259,3 +260,98 @@
 - **Not yet exercised live:** nothing has accumulated real samples, because no
   bot has produced a real decision yet (no provider keys). The 30/100 floors
   mean weights will not move for days of real running — that is the design.
+
+## Phase 6 notes / decisions (UI)
+
+- **One new dependency link:** `zod` added to `apps/web` (already in the lockfile via
+  `@wick/shared`/server — a link, not a download). `lightweight-charts` was already in
+  `apps/web/package.json` from the Phase-0 shell. No state library added; the app uses
+  the `@tanstack/react-query` + `lib/query.ts` that survived from cockpit.
+- **Fonts self-hosted**, no CDN: `apps/web/public/fonts/*.woff2` (Press Start 2P latin-400,
+  JetBrains Mono latin-400/500/700), pulled once with `npm pack @fontsource/...` and
+  declared as `@font-face` in `globals.css`. Both SIL OFL 1.1 — `public/fonts/LICENSES.txt`.
+  The Phase-0 `@import url(fonts.googleapis.com)` is GONE.
+- **Design system** (`app/globals.css` + `components/ui/index.tsx`): `Panel`, `StatusLed`
+  (solid, no blink), `Stat`, `Sparkline` (inline SVG), `ActionBadge`, `OutcomeBadge`,
+  `PixelTitle`, plus `WeightBar`/`UsageBar`/`Btn`/`VoteDot`/`Empty`. Motion is data-only
+  (`flash-up`/`flash-down` tick flash, `slide-in` feed) and is disabled under
+  `prefers-reduced-motion`. CRT overlay is `components/CrtOverlay.tsx`, mounted only when
+  the settings toggle is on (localStorage `wick.crt`, default OFF).
+- **Chart colors are duplicated as hex in `lib/chart-theme.ts`** — canvas cannot resolve
+  CSS variables. Keep it in sync with `globals.css` by hand.
+- **SSE**: `lib/sse.ts` owns ONE `EventSource` for the whole app, opened lazily on the
+  first `useLive` subscriber and fanned out by topic. `onerror` closes and reconnects with
+  1s→30s backoff (the native retry can sit on a dead socket after a server restart). The
+  `Nav` subscribes to `market_warm` purely to keep that connection open on pages that
+  consume no live data. Streaming through the Next `/api/*` rewrite was verified — no
+  buffering, no need to talk to :3001 directly.
+- **Decision log virtualization is hand-rolled** (no new dep): fixed 30px rows, +188px when
+  expanded, prefix-summed offsets and a binary search for the first visible row.
+- **Equity drawdown shading** uses a two-area-series trick (red area on the HWM, then an
+  OPAQUE panel-colored area on the equity painted over it) — lightweight-charts v4 has no
+  band series. Snapshots come from `equity_snapshots`, never recomputed client-side.
+- **"Allowance"** in the bot header is read as the daily trade budget (`max_trades_day`),
+  edited inline; everything else in `config_json` lives in the zod-validated config drawer.
+- **Deviations from the "one server edit" brief (2 files touched, both flagged):**
+  1. NEW `apps/server/src/api/providers.ts` — `GET /api/providers` (registry + today's
+     `llm_usage` + headroom, which nothing exposed and the usage bars need) and
+     `POST /api/providers/:id/test` (one cheap call pinned to one provider through
+     `router.complete()`); registered in `api/server.ts`.
+  2. `apps/server/src/api/assets.ts` — `POST /api/assets` now validates the symbol against
+     Binance `exchangeInfo` (spot + `TRADING`, cached 1h, add REJECTED on network failure).
+     IMPL-4 §6.6 requires server-side validation and nothing did it.
+- **Registry gotcha:** `providers.registry` rows with `baseUrl: ""` are silently dropped by
+  `getProviders()` (`z.string().min(1)`), so a stub provider row needs a non-empty baseUrl.
+- Verification used a throwaway `stub` provider + two 1m-cadence probe bots, then purged
+  everything (`bots` is back to Patience/Contrarian, all decision/fill/trigger tables at 0).
+  One `llm_usage` row for `mistral` is left on purpose — it records a real 401 test call.
+- **Not done / for Luka:** the §12 design pass (screenshot review) is explicitly deferred.
+  Screenshots: `D:/Claude/tempo/wick-phase6/wick-{dashboard,dashboard-feed,bot-page,
+  bot-page-expanded,bot-chart-1d,bot-indicators,market,settings,settings-advanced-crt}.png`.
+- `next.config.mjs` still rewrites a dead `/stream` route (cockpit leftover, harmless).
+
+## Phase 6 acceptance re-verification (independent run, 2026-08-08 16:35–16:52)
+
+Full IMPL-4 §6 acceptance list re-run against the built (`next build` + `next start`)
+web app, not dev mode. All items pass except the vault one, which passes within a boot
+and fails across restarts because of a pre-existing Phase-3 defect (below).
+
+| Acceptance | Result | Evidence |
+|---|---|---|
+| `pnpm typecheck` | pass | 3/3 projects, no output |
+| `pnpm --filter @wick/web build` | pass | 7 routes, compiled in 3.1s, no warnings |
+| Dashboard: 2 seeded bots + live market strip | pass | 7 symbols with live prices, `warm`, both bot cards |
+| Decision in feed ≤1s after SSE event | pass | **13 ms** measured in-page (SSE `decision` receipt → feed row in DOM) |
+| Bot page markers / expansion / outcome badges | pass | buy+sell markers + SL price line from real `pnpm paper` fills; row expands to reasoning; `1h +0.30` / `4h -0.30` / `24h —` badges |
+| Stop/start from UI takes effect on next wake | pass | `trigger_log` for the probe bot has rows at 16:45:05 and 16:48:05 but **none at 16:46/16:47**, exactly the stopped window |
+| Settings: key round-trip via vault | **partial** | save → `present:true`, `masked "wicxxx…6789"`, `getApiKey` decrypts (`hasKey:true`). After a server restart: `"decrypt failed"` — see defect below |
+| No external font/CDN requests | pass | Playwright network log: **0** requests outside `127.0.0.1:3000`; only `/fonts/*.woff2` local; built CSS has no external `url()`; no `fonts.googleapis`/`gstatic`/`jsdelivr`/`unpkg` anywhere in `.next` |
+| Console clean | pass | 0 errors, 0 warnings across `/`, `/bots/[id]`, `/market`, `/settings` |
+| Design pass vs §12 | **deferred to Luka** | screenshots below |
+
+**BLOCKER for Phase 7 — `WICK_MASTER_KEY` is regenerated on every boot.**
+`apps/server/src/config.ts` does `import 'dotenv/config'`, which reads `.env` relative to
+`process.cwd()`. Under `pnpm --filter @wick/server dev` the cwd is `apps/server/`, whose
+`.env` only holds the legacy `COCKPIT_MASTER_KEY`. The repo-root `.env` that actually holds
+`WICK_MASTER_KEY` is never loaded, so `index.ts` believes it is a first run, generates a new
+key and **overwrites the root `.env`** — every single boot. Reproduced: root `.env` md5
+changed across a restart and the just-saved cerebras key came back `"decrypt failed"`.
+Nothing was lost (no real key has ever been stored), but the settings page cannot be trusted
+until this is fixed. One-line fix in `config.ts`: load the repo-root `.env` explicitly on the
+same path `index.ts` already computes, instead of relying on cwd. Not applied here — outside
+the Phase 6 brief's permitted server edits.
+
+Also noted (not fixed): lightweight-charts renders a TradingView attribution `<a>` pointing
+at `tradingview.com`. It is a link, never fetched — no network request is made — but it is
+the only external URL rendered by the app.
+
+**Screenshots** (this run): `D:/Claude/tempo/Wick-plan/shots/` —
+`01-dashboard`, `02-bot-page`, `03-bot-decision-expanded`, `04-bot-triggers-stopped`,
+`05-bot-indicators`, `06-bot-journal`, `07-bot-config-drawer`, `08-market`, `09-settings`,
+`10-settings-advanced-crt-on`, `11-dashboard-clean` (all `.png`).
+**Design/screenshot review with Luka is still the one open Phase 6 item.**
+
+Verification data was created and then purged: probe bots 3–5, their decisions/fills/
+positions/outcomes/journal/lessons/indicator_stats/trigger_log rows, the throwaway `stub`
+registry entry, its `llm_usage` row, and the test cerebras vault key are all gone; `bots` is
+back to Patience/Contrarian and every trade table is at 0.

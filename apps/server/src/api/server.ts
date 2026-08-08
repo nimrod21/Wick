@@ -11,6 +11,7 @@ import { registerMarketRoutes } from './market.js';
 import { registerBotsReadRoutes } from './bots-read.js';
 import { registerBotsRoutes } from './bots.js';
 import { registerLearnBotRoutes, registerStatsRoutes } from './learn.js';
+import { registerProvidersRoutes } from './providers.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -36,6 +37,8 @@ export async function buildServer() {
   // Phase 5 learning routes.
   await app.register(registerLearnBotRoutes, { prefix: '/api/bots' });
   await app.register(registerStatsRoutes, { prefix: '/api/stats' });
+  // Phase 6 UI routes.
+  await app.register(registerProvidersRoutes, { prefix: '/api/providers' });
 
   return app;
 }

@@ -1,4 +1,33 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;700&display=swap');
+/* Self-hosted fonts (PLAN §12 / IMPL-4 6.1) — NO CDN, no runtime network.
+   Files live in apps/web/public/fonts, both SIL OFL 1.1 (see LICENSES.txt). */
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/press-start-2p-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
+}
 
 @tailwind base;
 @tailwind components;
@@ -20,6 +49,14 @@
   --muted:  #8A8A9E;
 
   --radius: 0px; /* square everything */
+
+  /* Spacing scale — 4px base, used through Tailwind's default scale too. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
 }
 
 * {
@@ -30,8 +67,9 @@ html,
 body {
   background: var(--bg);
   color: var(--fg);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+  font-size: 14px;
 }
 
 ::selection {
@@ -41,12 +79,22 @@ body {
 
 /* Pixel font for page titles + bot names ONLY (PLAN §12). */
 .pixel-font {
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Press Start 2P', ui-monospace, monospace;
   letter-spacing: 0.05em;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-/* Optional CRT scanline overlay — settings toggle, default OFF (Phase 6). */
+/* 1px hard-border panel — the only surface treatment in the system. */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Optional CRT scanline overlay — settings toggle, default OFF (task 6.1). */
 .scanlines {
   position: fixed;
   inset: 0;
@@ -54,9 +102,33 @@ body {
   z-index: 40;
   background: repeating-linear-gradient(
     transparent 0 2px,
-    rgba(0, 0, 0, 0.15) 2px 4px
+    rgba(0, 0, 0, 0.18) 2px 4px
   );
-  mix-blend-mode: multiply;
+}
+
+/* Data-update motion only (PLAN §12): tick flash + feed slide-in. */
+@keyframes wick-flash-up {
+  from { background-color: rgba(51, 255, 102, 0.22); }
+  to   { background-color: transparent; }
+}
+@keyframes wick-flash-down {
+  from { background-color: rgba(255, 56, 96, 0.22); }
+  to   { background-color: transparent; }
+}
+@keyframes wick-slide-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.flash-up   { animation: wick-flash-up 420ms linear; }
+.flash-down { animation: wick-flash-down 420ms linear; }
+.slide-in   { animation: wick-slide-in 160ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-up,
+  .flash-down,
+  .slide-in {
+    animation: none;
+  }
 }
 
 button,
@@ -65,6 +137,7 @@ select,
 textarea {
   border-radius: 0;
   font-family: inherit;
+  font-size: inherit;
 }
 
 input,
@@ -73,7 +146,7 @@ textarea {
   background: var(--panel);
   border: 1px solid var(--border);
   color: var(--fg);
-  padding: 0.5rem 0.75rem;
+  padding: 0.375rem 0.5rem;
   outline: none;
 }
 
@@ -81,6 +154,11 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--cyan);
+}
+
+:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 1px;
 }
 
 ::-webkit-scrollbar {

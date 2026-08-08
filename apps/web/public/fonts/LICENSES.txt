@@ -1,0 +1,9 @@
+Press Start 2P — SIL Open Font License 1.1
+Copyright 2012 The Press Start 2P Project Authors (cody@zone38.net)
+Source: @fontsource/press-start-2p 5.3.0 (npm), latin subset, woff2
+
+JetBrains Mono — SIL Open Font License 1.1
+Copyright 2020 The JetBrains Mono Project Authors
+Source: @fontsource/jetbrains-mono 5.3.0 (npm), latin subset, woff2 (400/500/700)
+
+Full OFL text: https://scripts.sil.org/OFL

@@ -1,7 +1,41 @@
 import type { FastifyInstance } from 'fastify';
+import { request as undiciRequest } from 'undici';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { nowMs } from '../util/time.js';
+import { logger } from '../util/logger.js';
+
+/**
+ * Binance exchangeInfo gate for the Phase-6 watchlist editor: a symbol only
+ * enters the watchlist if Binance spot trades it. Cached 1h — the list is
+ * ~2500 symbols and changes rarely. On a network failure the add is REJECTED
+ * (better a retry than a symbol the collectors can never fill).
+ */
+let symbolCache: { ts: number; symbols: Set<string> } | null = null;
+const SYMBOL_CACHE_TTL_MS = 60 * 60_000;
+
+async function tradableSymbols(): Promise<Set<string> | null> {
+  if (symbolCache && nowMs() - symbolCache.ts < SYMBOL_CACHE_TTL_MS) return symbolCache.symbols;
+  try {
+    const res = await undiciRequest('https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT', {
+      headersTimeout: 15_000,
+      bodyTimeout: 15_000,
+    });
+    if (res.statusCode !== 200) return null;
+    const body = (await res.body.json()) as { symbols?: Array<{ symbol?: string; status?: string }> };
+    if (!Array.isArray(body.symbols)) return null;
+    const set = new Set<string>();
+    for (const s of body.symbols) {
+      if (typeof s.symbol === 'string' && s.status === 'TRADING') set.add(s.symbol.toUpperCase());
+    }
+    if (set.size === 0) return null;
+    symbolCache = { ts: nowMs(), symbols: set };
+    return set;
+  } catch (err) {
+    logger.warn({ err }, 'exchangeInfo fetch failed');
+    return null;
+  }
+}
 
 const postBodySchema = z.object({
   symbol: z.string().min(1),
@@ -48,6 +82,14 @@ export async function registerAssetsRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(400).send({ error: 'bad body', issues: parsed.error.issues });
     }
     const b = parsed.data;
+    const symbol = b.symbol.toUpperCase();
+    const known = await tradableSymbols();
+    if (known === null) {
+      return reply.code(503).send({ error: 'could not reach Binance exchangeInfo — try again' });
+    }
+    if (!known.has(symbol)) {
+      return reply.code(400).send({ error: `${symbol} is not a tradable Binance spot symbol` });
+    }
     db.prepare(
       `INSERT INTO assets (symbol, display_name, active, added_ts)
        VALUES (?, ?, ?, ?)

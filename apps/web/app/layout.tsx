@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Nav } from '@/components/Nav';
+import { CrtOverlay } from '@/components/CrtOverlay';
+import { QueryProvider } from '@/lib/query';
 
 export const metadata: Metadata = {
   title: 'Wick',
@@ -10,8 +13,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-bg text-fg">
-        {/* Phase 6 rebuilds the shell (navbar, pages, design system). */}
-        <main className="p-6">{children}</main>
+        <QueryProvider>
+          <Nav />
+          <main className="p-4">{children}</main>
+          <CrtOverlay />
+        </QueryProvider>
       </body>
     </html>
   );

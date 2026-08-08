@@ -1,4 +1,11 @@
-import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+// Always load the repo-root .env regardless of cwd (pnpm --filter runs with cwd=apps/server,
+// which made WICK_MASTER_KEY invisible and regenerated it every boot).
+dotenv.config({
+  path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '.env'),
+});
 import { z } from 'zod';
 import { db } from './db/client.js';
 import { decrypt } from './util/crypto-vault.js';

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { FastifySSEPlugin } from 'fastify-sse-v2';
 import { logger } from '../util/logger.js';
-import { nowSec } from '../util/time.js';
+import { registerHealthRoutes } from './health.js';
 import { registerSseRoutes } from './sse.js';
 import { registerSettingsRoutes } from './settings.js';
 import { registerAssetsRoutes } from './assets.js';
@@ -25,8 +25,7 @@ export async function buildServer() {
   });
   await app.register(FastifySSEPlugin);
 
-  app.get('/health', async () => ({ ok: true, ts: nowSec() }));
-
+  await app.register(registerHealthRoutes);
   await app.register(registerSseRoutes);
   await app.register(registerSettingsRoutes, { prefix: '/api/settings' });
   await app.register(registerAssetsRoutes, { prefix: '/api/assets' });

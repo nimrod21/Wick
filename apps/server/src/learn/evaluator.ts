@@ -190,6 +190,13 @@ export interface EvaluatorRun {
   byHorizon: Record<Horizon, number>;
 }
 
+/** Last completed pass (ops surface — GET /health, `pnpm doctor`). */
+let lastRun: { ts: number; run: EvaluatorRun } | null = null;
+
+export function lastEvaluatorRun(): { ts: number; run: EvaluatorRun } | null {
+  return lastRun;
+}
+
 /**
  * One evaluation pass. Safe to call any time — it is idempotent (the
  * `outcomes` PK plus the NOT EXISTS filter) and self-healing (a decision
@@ -243,6 +250,7 @@ export function evaluatePending(ts: number = nowMs()): EvaluatorRun {
   // always see a committed outcomes row.
   for (const evt of events) eventBus.emit(evt);
 
+  lastRun = { ts: nowMs(), run };
   if (run.written > 0 || run.skipped > 0) {
     logger.info(
       { written: run.written, skipped: run.skipped, byHorizon: run.byHorizon },

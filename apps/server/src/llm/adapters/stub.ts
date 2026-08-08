@@ -63,11 +63,27 @@ function render(behavior: StubBehavior): AdapterResult {
   }
 }
 
+/**
+ * Out-of-process override for the unscripted default: `WICK_STUB_DECISION`
+ * holds a decision JSON object. `pnpm smoke` boots a real server with it set
+ * so a stub-provider wake produces a deterministic, non-`wait` decision.
+ */
+function envDecision(): Record<string, unknown> | null {
+  const raw = process.env.WICK_STUB_DECISION;
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const stubAdapter: Adapter = async (provider, _apiKey, req): Promise<AdapterResult> => {
   calls.push({ providerId: provider.id, req });
   const script = scripts.get(provider.id);
   if (!script || script.behaviors.length === 0) {
-    return render({ kind: 'valid' });
+    return render({ kind: 'valid', decision: envDecision() ?? DEFAULT_DECISION });
   }
   const behavior = script.behaviors[Math.min(script.cursor, script.behaviors.length - 1)]!;
   script.cursor += 1;

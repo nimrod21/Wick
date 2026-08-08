@@ -1,6 +1,8 @@
 # Wick — Status
 
-**Current phase:** 6 — UI (built + verified; **design/screenshot review with Luka still open**)
+**Current phase:** 7 — Hardening & service (built + verified). **All seven phases are
+complete.** What is left is Luka's to run by hand: 72h soak, design/screenshot review,
+provider-key registration, pm2 boot autostart.
 
 ## Phase checklist
 
@@ -13,7 +15,8 @@
       accumulation needs bots deciding, i.e. provider keys)
 - [x] Phase 6 — UI (all four pages live over SSE; **design pass with Luka pending** —
       screenshots in `D:/Claude/tempo/wick-phase6/`)
-- [ ] Phase 7 — Hardening & service
+- [x] Phase 7 — Hardening & service (pm2 both apps, crash-only audit 12/12, data
+      hygiene, `/health` + `pnpm doctor`, `pnpm smoke`, README — **72h soak deferred to Luka**)
 
 ## Environment notes
 
@@ -355,3 +358,127 @@ Verification data was created and then purged: probe bots 3–5, their decisions
 positions/outcomes/journal/lessons/indicator_stats/trigger_log rows, the throwaway `stub`
 registry entry, its `llm_usage` row, and the test cerebras vault key are all gone; `bots` is
 back to Patience/Contrarian and every trade table is at 0.
+
+---
+
+## Phase 7 notes / decisions (hardening & service)
+
+**Verified 2026-08-08.** Everything below was run end to end on this box against the
+built artifacts, not dev mode.
+
+### 7.1 Service (pm2)
+
+- `ecosystem.config.cjs` now runs **both** apps: `wick-server` (`apps/server/dist/index.js`)
+  and `wick-web` (`next start -p 3000 -H 127.0.0.1`, script `node_modules/next/dist/bin/next`
+  so pm2 never spawns the `.cmd` shim). Node 22 interpreter + `PATH` are pinned in each
+  app's `env` (PLAN §16.10) and `NODE_ENV=production` is set for both.
+- Shared restart policy: `max_restarts: 10`, `exp_backoff_restart_delay: 3000`,
+  `min_uptime: 20s`, `max_memory_restart: 1G`. Logs split per app into
+  `logs/{server,web}-{out,err}.log`.
+- `NODE_ENV=production` is load-bearing for the SERVER too, not just Next:
+  `util/logger.ts` attaches the `pino-pretty` transport in non-production and that
+  worker thread crashes the process when stdout is a pm2 file/pipe. `pnpm smoke` sets
+  it for the same reason.
+- Root scripts: `pm2:start` (builds first), `pm2:restart`, `pm2:stop`, `pm2:delete`,
+  `pm2:logs`, `pm2:status`.
+- **pm2-logrotate stays a one-time manual install** (documented in README, not in the
+  config file): `pm2 install pm2-logrotate` + `max_size 10M` + `retain 5`.
+- Cycle test: `pm2 start ecosystem.config.cjs` -> both apps `online`, `/health` 200 with
+  `marketWarm:true` off the built dist, web `/` 200 (8211 bytes) -> `pm2 delete all`,
+  pm2 list left empty. **`pm2 save` / `pm2-startup install` were deliberately NOT run.**
+
+**Blocker found and fixed while doing this:** `node apps/server/dist/index.js` had never
+worked. `@wick/shared` was a source-only package (`main: ./src/index.ts`), which tsx and
+Next transpile but plain Node cannot load — the built server died with
+`ERR_MODULE_NOT_FOUND .../packages/shared/src/assets.js`. `packages/shared` now emits
+`dist/` (`build` script; `main`/`types`/`exports` point at it), and the root `dev` script
+builds it first so a clean clone still boots in dev.
+
+### 7.2 Crash-only audit — 12/12 pass
+
+Processes were killed with SIGKILL and the DB inspected afterwards. Every row the
+harness created was purged (`bots` back to Patience/Contrarian, all trade tables at 0).
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| kill -9 **inside a fill transaction** | pass | victim killed mid-transaction (marker written from inside the tx): `fills=0 positions=0 cash=1000` — every write rolled back; `PRAGMA integrity_check=ok` |
+| kill -9 **mid-LLM call** | pass | bot pointed at a black-hole HTTP provider that accepts and never answers; killed with the request in flight -> `decisions=0 fills=0` (absent, never phantom-executed) |
+| **restart after that kill** | pass | server reboots to `marketWarm`, `bots reloaded` logged, still `decisions=0` — the in-flight wake is neither resumed nor duplicated (the wake queue is process memory, so it empty-starts by construction) |
+| kill -9 **mid-evaluator pass** | pass | 2400 seeded decisions; killed after 0.7s with `3191/7200` outcome rows written, 0 duplicate `(decision,horizon)` rows |
+| **evaluator re-picks** | pass | re-run drained the rest: `7200/7200` outcomes, 4009 added, 0 duplicates (idempotent via the outcomes PK + the `NOT EXISTS` filter) |
+| **protector re-arms** | pass | position with a stop above market inserted, server booted cold -> `protector armed` -> sell fill @ 64972.96 vs stop 97508.17, position gone, exactly 1 `trigger_type='protector'` decision |
+
+**Fix made:** `bot-runner` writes the decision row *before* asking the engine to fill it
+(so the fill can carry `decision_id`), so a kill -9 in between leaves a `buy` decision
+marked `executed` that never moved money — a phantom trade in both the audit trail and
+the learning stats. New `bots/reconcile.ts` runs at boot and rewrites any buy/sell
+decision that is `executed` with no matching `fills` row to
+`vetoed / veto_reason='crash_no_fill'`. Verified: a hand-planted phantom row came back
+`status=vetoed veto_reason=crash_no_fill` after one boot. Chosen over widening the
+transaction across an event-publishing engine call — crash-only repair, not a bigger lock.
+
+### 7.3 Data hygiene
+
+`jobs/hygiene.ts`, started from `index.ts`:
+
+- nightly **03:20** — prune `candles` with `tf='1m'` older than 14d and `trigger_log`
+  older than 30d (higher timeframes are tiny and the evaluator prices off 1h, so only 1m
+  is pruned; decisions/fills/outcomes/journal are never pruned), then a rotated backup.
+- backups via better-sqlite3's online `backup()` (WAL-safe, no writer lock) into
+  `apps/server/data/backups/`, newest 3 kept. Verified: 4 backups written, oldest
+  removed, 3 remain.
+- weekly **Sun 03:40** — `VACUUM`, **skipped when a fill landed in the last 60s**
+  (IMPL-4 pitfall). Both paths verified: `vacuumed` when quiet, `skipped` with a fresh fill.
+- No SSE GC pass was needed: `api/sse.ts` already unsubscribes from the bus on the
+  socket's `close` event.
+
+### 7.4 Ops surface
+
+- `GET /health` (now `api/health.ts`) returns ws `{connected,lastMessageAgoMs,reconnectAttempt,symbols,buffering}`,
+  `marketWarm`, per-provider `{enabled,rpd,used,errors,remaining,headroom}`, `poolRemaining`,
+  bots `{total,running,stopped,busted}`, last evaluator run `{ts,agoSec,written,skipped}`
+  and DB stats. New accessors: `wsStatus()` (binance-ws) and `lastEvaluatorRun()` (evaluator).
+- `pnpm doctor` prints the same report plus what the server cannot see: Node version
+  (warns off 22), presence of `apps/server/dist` and `apps/web/.next`, master key,
+  per-provider key presence, backup files. Degrades to `SERVER DOWN` with local DB
+  numbers when nothing is listening, and exits 0 either way.
+
+### 7.5 Smoke test
+
+`pnpm smoke` — **green, 9/9**, ~90s. It installs a throwaway `stub-smoke` provider
+(adapter `stub`, no network, no key), boots the real server (built dist when present,
+else tsx on source) against real Binance, waits for `marketWarm`, creates a 1m-cadence
+throwaway bot pinned to that provider and waits for the scheduled wake. Asserts: the
+decision row is the stubbed BUY and `executed`, the provider is recorded, the fill was
+written (`qty=0.003076 @ 65048.50 fee=0.20`), the position opened with SL/TP armed, and
+both the decision and the fill arrived over SSE. Teardown removes the bot and every row
+it wrote, its `llm_usage` row, and restores `providers.registry` byte for byte.
+
+- The stub adapter gained a `WICK_STUB_DECISION` env override so an out-of-process
+  server can return a deterministic non-`wait` decision; in-process `setStubScript`
+  behaviour is unchanged.
+- Registry gotcha (again): a stub provider row needs a non-empty `baseUrl` or
+  `getProviders()` silently drops it.
+
+### 7.6 Docs & cleanup
+
+- `README.md` rewritten: what Wick is, the three code-enforced rules, an architecture
+  sketch, Node 22 run instructions, script table, pm2 service section (including the
+  manual logrotate/startup steps), provider-key setup pointing at `llm/README-setup.md`,
+  data durability, and the "paper only, $0 by design" statement.
+- Dead `/stream` rewrite (cockpit leftover) removed from `apps/web/next.config.mjs`.
+
+### Deferred — Luka runs these
+
+1. **72h unattended soak** with 2 bots on real free tiers (the real Phase-7 gate:
+   uptime, calls/day per provider, decisions, candle gaps self-healed, memory flat).
+   Needs provider keys first; the report belongs in this file.
+2. **Design/screenshot review** of the Phase 6 UI vs PLAN §12 — still the one open
+   Phase 6 item (screenshots in `D:/Claude/tempo/Wick-plan/shots/`).
+3. **Provider key registration** — no key has ever been stored, so the router skips
+   every provider and live bots would record `llm_failed`.
+4. **pm2 boot autostart** — `pm2 save` + `pm2-startup install`, plus
+   `pm2 install pm2-logrotate`. Deliberately not touched here; pm2 was left with an
+   empty process list.
+5. Windows sleep/hibernate still kills the WS silently — either disable sleep on the
+   box or confirm reconnect + hourly self-heal covers a multi-hour gap.

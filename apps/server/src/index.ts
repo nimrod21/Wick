@@ -28,6 +28,8 @@ import {
 } from './market/indicator-engine.js';
 import { setMarketWarm } from './market/market-state.js';
 import { startScheduler, stopScheduler } from './jobs/scheduler.js';
+import { startHygiene, stopHygiene } from './jobs/hygiene.js';
+import { reconcileCrashedDecisions } from './bots/reconcile.js';
 import { startEquityCron, stopEquityCron } from './paper/engine.js';
 import { startProtector, stopProtector } from './paper/protector.js';
 import { startTriggerEngine, stopTriggerEngine } from './market/trigger-engine.js';
@@ -95,7 +97,13 @@ async function main(): Promise<void> {
   //    klines), then REST backfill; on completion flush the buffer, flip
   //    marketWarm, and run one full indicator pass so /api/market/indicators
   //    answers immediately.
+  // 4b. Crash recovery (IMPL-4 §7.2): a kill -9 between the decision INSERT
+  //     and its fill leaves an 'executed' trade row with no fill. Repair it
+  //     before anything can read it as real history.
+  reconcileCrashedDecisions();
+
   startScheduler();
+  startHygiene();
   startEquityCron();
   startProtector(); // arms its SL/TP index once marketWarm fires below
   seedDefaultBots(); // two default bots on first boot (idempotent by name)
@@ -131,6 +139,7 @@ async function main(): Promise<void> {
       stopIndicatorStats();
       stopJournal();
       stopScheduler();
+      stopHygiene();
       stopProtector();
       stopEquityCron();
       stopIndicatorEngine();

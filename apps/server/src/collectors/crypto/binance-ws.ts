@@ -402,3 +402,25 @@ export function getLastPrice(symbol: string): number | null {
 export function getTickerStats(symbol: string): TickerStats | null {
   return tickerStatsBySymbol.get(symbol) ?? null;
 }
+
+export interface WsStatus {
+  connected: boolean;
+  /** Age of the last frame received, ms (null before the first frame). */
+  lastMessageAgoMs: number | null;
+  /** 0 while healthy; climbs while the backoff ladder is walked. */
+  reconnectAttempt: number;
+  symbols: number;
+  /** True until the boot backfill has been flushed. */
+  buffering: boolean;
+}
+
+/** Ops view of the collector (GET /health, `pnpm doctor`). */
+export function wsStatus(): WsStatus {
+  return {
+    connected: ws !== null && ws.readyState === WebSocket.OPEN,
+    lastMessageAgoMs: lastMessageAt === 0 ? null : Date.now() - lastMessageAt,
+    reconnectAttempt,
+    symbols: knownSymbols.size,
+    buffering,
+  };
+}

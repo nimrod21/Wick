@@ -117,33 +117,27 @@ function tryDecision(text: string): { ok: true; decision: Decision } | { ok: fal
   return { ok: true, decision: validated.data };
 }
 
-export async function decide(
-  botCtx: BotCtx,
-  snapshot: Snapshot,
-  opts: DecideOptions = {},
-): Promise<DecideResult> {
-  try {
-    return await decideInner(botCtx, snapshot, opts);
-  } catch (err) {
-    // Belt and braces: decide() must NEVER throw into the bot loop.
-    logger.error({ bot: botCtx.botId, err }, 'llm router: unexpected error');
-    return { failed: true, reason: `unexpected: ${err instanceof Error ? err.message : String(err)}` };
-  }
+interface Candidate {
+  provider: ProviderRecord;
+  model: string;
+  apiKey: string | null;
+  adapter: Adapter;
 }
 
-async function decideInner(
-  botCtx: BotCtx,
-  snapshot: Snapshot,
+/**
+ * Rotation order for one call: the caller's provider_order ∩ enabled ∩
+ * headroom ∩ has-a-model ∩ has-a-key. LAZY on purpose — headroom is checked
+ * at the moment the candidate is reached, so quota consumed by an earlier
+ * attempt in the same call is respected. Shared by `decide` and `complete`.
+ */
+function* eligibleProviders(
+  order: string[],
+  registry: ProviderRecord[],
   opts: DecideOptions,
-): Promise<DecideResult> {
-  const now = opts.now ?? Date.now;
-  const registry = opts.providers ?? getProviders();
+  now: () => number,
+  skipped: string[],
+): Generator<Candidate> {
   const byId = new Map(registry.map((p) => [p.id, p]));
-  const order = botCtx.providerOrder ?? registry.map((p) => p.id);
-  const prompt = buildPrompt(botCtx.config, snapshot);
-  const log = logger.child({ bot: botCtx.botId });
-  const skipped: string[] = [];
-
   for (const providerId of order) {
     const provider = byId.get(providerId);
     if (!provider || !provider.enabled) continue;
@@ -167,7 +161,102 @@ async function decideInner(
       skipped.push(`${providerId}:unknown-adapter`);
       continue;
     }
+    yield { provider, model, apiKey, adapter };
+  }
+}
 
+export interface CompleteSuccess {
+  failed?: false;
+  text: string;
+  provider: string;
+  model: string;
+  latencyMs: number;
+}
+
+export type CompleteResult = CompleteSuccess | DecideFailure;
+
+/**
+ * Free-text call through the SAME provider rotation and quota ledger as
+ * `decide` — no JSON contract, no repair retry. The only caller is the daily
+ * lesson compression (PLAN §11.3, the one non-decision LLM spend). Never
+ * throws: a total failure is `{failed: true}` and the caller keeps whatever
+ * it had.
+ */
+export async function complete(
+  botCtx: Pick<BotCtx, 'botId' | 'providerOrder'>,
+  prompt: { system: string; user: string },
+  opts: DecideOptions = {},
+): Promise<CompleteResult> {
+  const now = opts.now ?? Date.now;
+  const registry = opts.providers ?? getProviders();
+  const order = botCtx.providerOrder ?? registry.map((p) => p.id);
+  const log = logger.child({ bot: botCtx.botId });
+  const skipped: string[] = [];
+
+  try {
+    for (const cand of eligibleProviders(order, registry, opts, now, skipped)) {
+      const t0 = now();
+      const res = await cand.adapter(cand.provider, cand.apiKey, {
+        model: cand.model,
+        system: prompt.system,
+        user: prompt.user,
+      });
+      const latencyMs = now() - t0;
+      record(cand.provider, res.ok, now());
+      if (!res.ok) {
+        log.warn({ provider: cand.provider.id, status: res.status }, 'llm text call failed, rotating');
+        continue;
+      }
+      if (res.text.trim().length === 0) {
+        log.warn({ provider: cand.provider.id }, 'llm text call returned empty body, rotating');
+        continue;
+      }
+      return { text: res.text, provider: cand.provider.id, model: cand.model, latencyMs };
+    }
+  } catch (err) {
+    logger.error({ bot: botCtx.botId, err }, 'llm router: unexpected error in complete()');
+    return { failed: true, reason: `unexpected: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  return {
+    failed: true,
+    reason: `all providers exhausted (${skipped.length > 0 ? skipped.join(', ') : 'none eligible'})`,
+  };
+}
+
+export async function decide(
+  botCtx: BotCtx,
+  snapshot: Snapshot,
+  opts: DecideOptions = {},
+): Promise<DecideResult> {
+  try {
+    return await decideInner(botCtx, snapshot, opts);
+  } catch (err) {
+    // Belt and braces: decide() must NEVER throw into the bot loop.
+    logger.error({ bot: botCtx.botId, err }, 'llm router: unexpected error');
+    return { failed: true, reason: `unexpected: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+async function decideInner(
+  botCtx: BotCtx,
+  snapshot: Snapshot,
+  opts: DecideOptions,
+): Promise<DecideResult> {
+  const now = opts.now ?? Date.now;
+  const registry = opts.providers ?? getProviders();
+  const order = botCtx.providerOrder ?? registry.map((p) => p.id);
+  const prompt = buildPrompt(botCtx.config, snapshot);
+  const log = logger.child({ bot: botCtx.botId });
+  const skipped: string[] = [];
+
+  for (const { provider, model, apiKey, adapter } of eligibleProviders(
+    order,
+    registry,
+    opts,
+    now,
+    skipped,
+  )) {
     // ── first attempt ──
     const t0 = now();
     const res = await adapter(provider, apiKey, { model, system: prompt.system, user: prompt.user });

@@ -6,9 +6,9 @@
  * fee drag, last 5 decisions with their 4h outcomes, standing lessons,
  * trigger reason, guard-state sentence) and the symbol-in-focus choice.
  *
- * Weights/hit-rates stay 1.0 / null until Phase 5 fills `indicator_stats`.
- * Built ONLY after the runner's gates pass (IMPL-3 pitfall: no wasted DB
- * work on gated wakes).
+ * Weights/hit-rates come from this bot's `indicator_stats` (Phase 5) — the
+ * bot id is threaded into `buildSnapshot` for exactly that. Built ONLY after
+ * the runner's gates pass (IMPL-3 pitfall: no wasted DB work on gated wakes).
  */
 
 import { db } from '../db/client.js';
@@ -204,5 +204,5 @@ export function buildBotSnapshot(
   triggerReason: string,
   ts: number = nowMs(),
 ): Snapshot {
-  return buildSnapshot(symbol, buildBotState(bot, cfg, symbol, triggerReason, ts));
+  return buildSnapshot(symbol, buildBotState(bot, cfg, symbol, triggerReason, ts), bot.id);
 }

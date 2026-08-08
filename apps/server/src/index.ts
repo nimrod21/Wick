@@ -34,6 +34,9 @@ import { startTriggerEngine, stopTriggerEngine } from './market/trigger-engine.j
 import { startBotScheduler, stopBotScheduler } from './bots/scheduler.js';
 import { seedDefaultBots } from './bots/bot-store.js';
 import { resumeBots, stopBustedCron } from './bots/boot.js';
+import { startEvaluatorCron, stopEvaluatorCron } from './learn/evaluator.js';
+import { startIndicatorStats, stopIndicatorStats } from './learn/indicator-stats.js';
+import { startJournal, stopJournal } from './learn/journal.js';
 
 function ensureMasterKey(): void {
   if (config.masterKey && config.masterKey.length >= 32) return;
@@ -108,6 +111,11 @@ async function main(): Promise<void> {
       //    Strictly after marketWarm (PLAN §16.9) so nothing wakes on a
       //    half-filled candle store.
       resumeBots();
+      // 7. Learning (Phase 5): the outcome subscribers go up BEFORE the
+      //    evaluator cron so no 4h outcome is published to an empty bus.
+      startIndicatorStats();
+      startJournal();
+      startEvaluatorCron();
     } catch (err) {
       logger.error({ err }, 'market warm-up failed');
     }
@@ -119,6 +127,9 @@ async function main(): Promise<void> {
       stopBotScheduler();
       stopTriggerEngine();
       stopBustedCron();
+      stopEvaluatorCron();
+      stopIndicatorStats();
+      stopJournal();
       stopScheduler();
       stopProtector();
       stopEquityCron();

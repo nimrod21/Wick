@@ -20,8 +20,15 @@ export interface SnapshotIndicator {
   name: string;
   value: number | null;
   vote: string | null; // 'bull'|'bear'|'neutral'|null
-  weight: number | null; // null → "n/a" (Phase 5 fills real ones)
-  hitRate: number | null; // 0..1 or null → "n/a"
+  weight: number | null; // learned trust (Phase 5); null → "n/a"
+  hitRate: number | null; // 0..1, Laplace-smoothed; null → "n/a" (no samples)
+  /** Samples behind hitRate. Omitted/null → shown as 0. */
+  samples?: number | null;
+  /**
+   * Auto-disabled indicator (PLAN §11.2): it stays in `snapshot_json` so its
+   * votes keep being recorded, but it is EXCLUDED from the prompt.
+   */
+  shadow?: boolean;
 }
 
 export interface SnapshotPastDecision {
@@ -141,13 +148,18 @@ function renderUser(s: Snapshot, candles: SnapshotCandle[]): string {
   }
   lines.push('');
 
-  lines.push('Indicators (1h; weight = learned trust, hit-rate = historical accuracy):');
+  lines.push('Indicators (1h; w = learned trust 0.25-2.0, hit-rate = YOUR accuracy on it, n = samples):');
+  // Shadow (auto-disabled) indicators are deliberately absent: they lost your
+  // trust, they keep recording votes in the background (PLAN §11.2).
   for (const ind of s.indicators) {
+    if (ind.shadow === true) continue;
     const value = ind.value === null ? 'n/a' : fmtNum(ind.value, 2);
     const vote = ind.vote ?? 'none';
     const weight = ind.weight === null ? 'n/a' : fmtNum(ind.weight, 2);
     const hit = ind.hitRate === null ? 'n/a' : `${fmtNum(ind.hitRate * 100, 0)}%`;
-    lines.push(`- ${ind.name}=${value} vote=${vote} weight=${weight} hit-rate=${hit}`);
+    lines.push(
+      `- ${ind.name}: ${value} [${vote}] — hit-rate ${hit} (w ${weight}, n ${ind.samples ?? 0})`,
+    );
   }
   lines.push(`- funding=${s.funding === null ? 'n/a' : `${fmtNum(s.funding * 100, 4)}%`}`);
   lines.push(`- fear_greed=${s.fearGreed === null ? 'n/a' : fmtNum(s.fearGreed, 0)}`);

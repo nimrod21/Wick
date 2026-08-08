@@ -42,15 +42,14 @@ Symbol in focus: BTCUSDT. Snapshot time: 08-02 00:00 UTC.
 08-01 22:00 43567.0/43747.0/43417.0/43627.0/1574
 08-01 23:00 43623.0/43803.0/43473.0/43683.0/1591
 
-Indicators (1h; weight = learned trust, hit-rate = historical accuracy):
-- atr14=312.44 vote=none weight=1 hit-rate=n/a
-- bollinger=0.82 vote=neutral weight=1 hit-rate=52%
-- ema_trend=1.63 vote=bull weight=1.25 hit-rate=58%
-- fear_greed=71 vote=bear weight=0.75 hit-rate=44%
-- funding=0.01 vote=neutral weight=1 hit-rate=n/a
-- macd=55.20 vote=bull weight=1.10 hit-rate=55%
-- rsi14=63.10 vote=neutral weight=1 hit-rate=50%
-- volume_ratio=1.90 vote=bull weight=0.90 hit-rate=48%
+Indicators (1h; w = learned trust 0.25-2.0, hit-rate = YOUR accuracy on it, n = samples):
+- atr14: 312.44 [none] — hit-rate n/a (w 1, n 0)
+- bollinger: 0.82 [neutral] — hit-rate 52% (w 1, n 41)
+- ema_trend: 1.63 [bull] — hit-rate 58% (w 1.25, n 47)
+- funding: 0.01 [neutral] — hit-rate n/a (w 1, n 0)
+- macd: 55.20 [bull] — hit-rate 55% (w 1.10, n 52)
+- rsi14: 63.10 [neutral] — hit-rate 50% (w 1, n 29)
+- volume_ratio: 1.90 [bull] — hit-rate 48% (w 0.90, n 44)
 - funding=0.0120%
 - fear_greed=71
 

@@ -38,15 +38,18 @@ export const FIXTURE_SNAPSHOT: Snapshot = {
   symbol: 'BTCUSDT',
   ts: BASE_TS + 24 * 3_600_000,
   candles1h: candles(),
+  // Phase 5: real learned weights/hit-rates/samples. `fear_greed` is the
+  // auto-disabled one — it must stay in the snapshot (its votes keep being
+  // recorded) and must NOT appear in the rendered prompt.
   indicators: [
-    { name: 'atr14', value: 312.44, vote: null, weight: 1.0, hitRate: null },
-    { name: 'bollinger', value: 0.82, vote: 'neutral', weight: 1.0, hitRate: 0.52 },
-    { name: 'ema_trend', value: 1.63, vote: 'bull', weight: 1.25, hitRate: 0.58 },
-    { name: 'fear_greed', value: 71, vote: 'bear', weight: 0.75, hitRate: 0.44 },
-    { name: 'funding', value: 0.012, vote: 'neutral', weight: 1.0, hitRate: null },
-    { name: 'macd', value: 55.2, vote: 'bull', weight: 1.1, hitRate: 0.55 },
-    { name: 'rsi14', value: 63.1, vote: 'neutral', weight: 1.0, hitRate: 0.5 },
-    { name: 'volume_ratio', value: 1.9, vote: 'bull', weight: 0.9, hitRate: 0.48 },
+    { name: 'atr14', value: 312.44, vote: null, weight: 1.0, hitRate: null, samples: 0, shadow: false },
+    { name: 'bollinger', value: 0.82, vote: 'neutral', weight: 1.0, hitRate: 0.52, samples: 41, shadow: false },
+    { name: 'ema_trend', value: 1.63, vote: 'bull', weight: 1.25, hitRate: 0.58, samples: 47, shadow: false },
+    { name: 'fear_greed', value: 71, vote: 'bear', weight: 0.75, hitRate: 0.41, samples: 118, shadow: true },
+    { name: 'funding', value: 0.012, vote: 'neutral', weight: 1.0, hitRate: null, samples: 0, shadow: false },
+    { name: 'macd', value: 55.2, vote: 'bull', weight: 1.1, hitRate: 0.55, samples: 52, shadow: false },
+    { name: 'rsi14', value: 63.1, vote: 'neutral', weight: 1.0, hitRate: 0.5, samples: 29, shadow: false },
+    { name: 'volume_ratio', value: 1.9, vote: 'bull', weight: 0.9, hitRate: 0.48, samples: 44, shadow: false },
   ],
   funding: 0.00012,
   fearGreed: 71,

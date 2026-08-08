@@ -8,6 +8,7 @@ import { db } from '../db/client.js';
 import { getLatestFunding } from '../collectors/macro/funding-oi.js';
 import { getLatestFearGreed } from '../collectors/macro/fear-greed.js';
 import { INDICATOR_TF } from '../market/indicator-engine.js';
+import { getIndicatorStats } from '../learn/indicator-stats.js';
 import type { Snapshot, SnapshotCandle, SnapshotIndicator, SnapshotPastDecision } from './prompt.js';
 
 export interface BotSnapshotState {
@@ -36,8 +37,16 @@ export class SnapshotDataError extends Error {}
 /**
  * Build a snapshot for `symbol`. Throws SnapshotDataError when the market
  * tables are empty (server never booted / never backfilled).
+ *
+ * `botId` pulls that bot's learned `indicator_stats` into every indicator
+ * (weight, hit-rate, samples, shadow flag). Bot-less callers (the `ask` CLI)
+ * pass null and get neutral weight 1.0 / hit-rate n/a.
  */
-export function buildSnapshot(symbol: string, botState: BotSnapshotState = placeholderBotState()): Snapshot {
+export function buildSnapshot(
+  symbol: string,
+  botState: BotSnapshotState = placeholderBotState(),
+  botId: number | null = null,
+): Snapshot {
   const candleRows = db
     .prepare(
       'SELECT ts, o, h, l, c, v FROM candles WHERE symbol = ? AND tf = ? ORDER BY ts DESC LIMIT 24',
@@ -68,15 +77,23 @@ export function buildSnapshot(symbol: string, botState: BotSnapshotState = place
     vote: string | null;
   }>;
 
-  // Phase 5 supplies real weights/hit-rates from indicator_stats; until then
-  // every enabled indicator carries weight 1.0 and hit-rate n/a.
-  const indicators: SnapshotIndicator[] = indicatorRows.map((r) => ({
-    name: r.name,
-    value: r.value,
-    vote: r.vote,
-    weight: 1.0,
-    hitRate: null,
-  }));
+  // Learned trust (PLAN §11.2). An indicator with no stats row yet is neutral
+  // (weight 1.0, hit-rate n/a) — a fresh bot trusts everything equally.
+  // Auto-disabled indicators stay in the snapshot as `shadow` so their votes
+  // keep being recorded; the prompt drops them.
+  const stats = botId === null ? null : getIndicatorStats(botId);
+  const indicators: SnapshotIndicator[] = indicatorRows.map((r) => {
+    const stat = stats?.get(r.name);
+    return {
+      name: r.name,
+      value: r.value,
+      vote: r.vote,
+      weight: stat?.weight ?? 1.0,
+      hitRate: stat?.hitRate ?? null,
+      samples: stat?.samples ?? 0,
+      shadow: stat ? !stat.enabled : false,
+    };
+  });
 
   return {
     symbol,

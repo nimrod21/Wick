@@ -1,6 +1,6 @@
 # Wick — Status
 
-**Current phase:** 4 — Bots + trigger engine (done; 24h soak deferred)
+**Current phase:** 5 — Learning & memory (done; needs live decisions to accumulate)
 
 ## Phase checklist
 
@@ -9,7 +9,8 @@
 - [x] Phase 2 — Paper trading engine
 - [x] Phase 3 — LLM provider layer (keys not yet registered — router skips keyless providers; stub + Ollama are the offline paths)
 - [x] Phase 4 — Bots + trigger engine (24h unattended soak deferred — needs provider keys)
-- [ ] Phase 5 — Learning & memory
+- [x] Phase 5 — Learning & memory (weights/lessons verified on seeded data — real
+      accumulation needs bots deciding, i.e. provider keys)
 - [ ] Phase 6 — UI
 - [ ] Phase 7 — Hardening & service
 
@@ -190,3 +191,71 @@
 - **Deferred:** the 24h unattended two-bot soak. It needs at least one
   provider key; with none registered every wake records `llm_failed` (free,
   harmless, but proves nothing). Run it once keys are in the vault.
+
+## Phase 5 notes / decisions (learning & memory)
+
+- **No new dependencies, no schema change.** New modules: `learn/{evaluator,
+  indicator-stats,journal}.ts`, `api/learn.ts`; one bus event kind added to
+  `@wick/shared` (`outcome`). All three learn modules start in `index.ts`
+  after `resumeBots()` — subscribers BEFORE the evaluator cron so no outcome
+  is published to an empty bus.
+- **Scoring reading (interpretation, flagged):** PLAN §11 says buy scores
+  `clamp(fwd_ret / 2%, -1, 1) minus round-trip fee (0.25%)`. The fee is
+  applied in RETURN space — `clamp((ret − 0.25) / 2, −1, 1)` — not subtracted
+  from the already-scaled score. Return space is dimensionally coherent (the
+  fee is quoted as a percentage return), keeps the score inside [−1,1] without
+  a second clamp, and still makes small winners negative ("being right small
+  still costs": +0.2% → −0.025). Sell carries no fee term because the plan
+  states none. If Luka meant the literal score-space subtraction, it is a
+  one-line change in `scoreFor`.
+- No look-ahead is structural, not a check: `priceAt(symbol, t)` selects
+  `MAX(ts) WHERE ts <= t − 1h` because a candle's `ts` is its OPEN time, so
+  only candles that had already CLOSED by `t` can be picked. A decision at
+  14:00 prices at 100 (the 13:00 candle's close) and its 1h forward price is
+  the 14:00 candle's close, i.e. 15:00 — the IMPL-3 pitfall verbatim.
+  A missing candle > 2h from the target instant returns null → the decision is
+  skipped and picked up by a later cron run once self-heal backfills.
+- `llm_failed` decisions are NOT scored (IMPL-3 §5.1 lists `executed` +
+  `vetoed`): no model answered, so there is nothing to judge. Vetoed rows are
+  scored as `wait` while `action`/`status` keep the original intent.
+- `outcome` bus events fire on the **4h horizon only** — 1h/24h rows are
+  stored for analysis but emitting them would triple-count every sample.
+  Protector (`trigger_type = 'protector'`, provider `code`) exits are scored
+  like any other sell; they have no `snapshot_json`, so they contribute no
+  indicator samples, and they show up as their own `code` row on the model
+  scoreboard.
+- **Re-trial without a schema column:** PLAN §6 fixes `indicator_stats` at
+  (bot, indicator, samples, hits, weight, enabled, updated_ts), so there is
+  nowhere to store "disabled at". The 4-weekly re-trial is therefore derived
+  from the clock — `isRetrialWeek()` is true in 1 UTC week out of 4 — and
+  during that week the daily recompute re-enables a disabled indicator whose
+  RECENT record (last 200 evaluated decisions, replayed from `snapshot_json`)
+  has >= 30 samples and a smoothed hit-rate >= 0.5. Disabled indicators are
+  never shown to the bot, in or out of the window; they always keep recording
+  votes via the shadow flag.
+- Snapshot indicators gained `samples` + `shadow`; the prompt line is now
+  `- rsi14: 63.10 [neutral] — hit-rate 50% (w 1.00, n 29)` and shadow rows are
+  dropped from the render (they stay in `snapshot_json`). Golden regenerated:
+  955 est tokens with full learning data, 1059 with 10 long lessons — both
+  well under the 2.5k target.
+- `llm/router.ts` gained `complete()` (free text, same rotation + quota
+  ledger, no JSON contract, no repair retry) for the one lesson call per bot
+  per day. Both `decide` and `complete` now share a lazy `eligibleProviders`
+  generator — laziness matters, headroom is re-checked at each candidate.
+- Lessons REPLACE (never append) and a failed call changes nothing at all —
+  yesterday's bullets simply stand another day. Bullets are capped at 10 and
+  1000 chars total in code, not by trusting the model.
+- Reflections are written only for EXECUTED buy/sell decisions; waits and
+  vetoes are already visible in the last-5-decisions block and would drown the
+  journal. Vote names in the text are the indicator names verbatim (1:1 join).
+- Crons: evaluator `*/15 * * * *`; indicator recompute `5 0 * * *`; lessons
+  `20 0 * * *` staggered 0–10 min by bot-id hash (after the recompute, so the
+  lesson call sees the stats the next prompt will use).
+- APIs: `GET /api/bots/:id/stats|journal?kind=|outcomes`, `GET /api/stats/models`.
+- Tests: `pnpm test:learn` (`scripts/test-learn.ts`) — 16 checks on synthetic
+  `TEST{1,2,3}USDT` candle series and test bots, all rows/settings restored.
+  Also added `test:guards|llm|bots|learn` package scripts (the suites already
+  existed, they just had no entry point).
+- **Not yet exercised live:** nothing has accumulated real samples, because no
+  bot has produced a real decision yet (no provider keys). The 30/100 floors
+  mean weights will not move for days of real running — that is the design.

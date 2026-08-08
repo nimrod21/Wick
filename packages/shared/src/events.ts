@@ -129,6 +129,27 @@ export type TriggerEvent = BaseEvent & {
   gateReason: string | null; // why fired=false
 };
 
+/**
+ * A decision was scored in hindsight (Phase 5, PLAN §11). Published by
+ * `learn/evaluator` on the PRIMARY 4h horizon only — that is what feeds the
+ * indicator stats and the journal; 1h/24h rows are stored for analysis but
+ * never emitted (they would triple-count every sample).
+ */
+export type OutcomeEvent = BaseEvent & {
+  kind: 'outcome';
+  decisionId: number;
+  botId: number;
+  horizon: '1h' | '4h' | '24h';
+  symbol: string;           // decision symbol, or BTCUSDT for symbol-less waits
+  /** The decision's own action column ('buy'|'sell'|'wait'). */
+  action: 'buy' | 'sell' | 'wait';
+  /** How it was SCORED: vetoed decisions score as 'wait' (PLAN §11). */
+  scoredAs: 'buy' | 'sell' | 'wait';
+  status: 'executed' | 'vetoed' | 'llm_failed';
+  fwdRetPct: number;
+  score: number;            // [-1, 1]
+};
+
 /** Bot lifecycle change (running/stopped/busted/reset). */
 export type BotStatusEvent = BaseEvent & {
   kind: 'bot_status';
@@ -149,7 +170,8 @@ export type Event =
   | OrderStatusEvent
   | DecisionEvent
   | TriggerEvent
-  | BotStatusEvent;
+  | BotStatusEvent
+  | OutcomeEvent;
 
 export type EventKind = Event['kind'];
 
@@ -165,4 +187,5 @@ export const VALID_EVENT_KINDS: readonly EventKind[] = [
   'decision',
   'trigger',
   'bot_status',
+  'outcome',
 ];

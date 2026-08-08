@@ -9,6 +9,7 @@ import { registerAssetsRoutes } from './assets.js';
 import { registerCandlesRoutes } from './candles.js';
 import { registerMarketRoutes } from './market.js';
 import { registerBotsReadRoutes } from './bots-read.js';
+import { registerBotsRoutes } from './bots.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -30,7 +31,8 @@ export async function buildServer() {
   await app.register(registerCandlesRoutes, { prefix: '/api/market/candles' });
   await app.register(registerMarketRoutes, { prefix: '/api/market' });
   await app.register(registerBotsReadRoutes, { prefix: '/api/bots' });
-  // Phase 2+ registers bot-scoped routes here (bots, decisions, stats, journal).
+  await app.register(registerBotsRoutes, { prefix: '/api/bots' });
+  // Phase 5 registers learning routes here (stats, outcomes, journal).
 
   return app;
 }

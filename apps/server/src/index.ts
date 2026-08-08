@@ -30,6 +30,10 @@ import { setMarketWarm } from './market/market-state.js';
 import { startScheduler, stopScheduler } from './jobs/scheduler.js';
 import { startEquityCron, stopEquityCron } from './paper/engine.js';
 import { startProtector, stopProtector } from './paper/protector.js';
+import { startTriggerEngine, stopTriggerEngine } from './market/trigger-engine.js';
+import { startBotScheduler, stopBotScheduler } from './bots/scheduler.js';
+import { seedDefaultBots } from './bots/bot-store.js';
+import { resumeBots, stopBustedCron } from './bots/boot.js';
 
 function ensureMasterKey(): void {
   if (config.masterKey && config.masterKey.length >= 32) return;
@@ -91,6 +95,7 @@ async function main(): Promise<void> {
   startScheduler();
   startEquityCron();
   startProtector(); // arms its SL/TP index once marketWarm fires below
+  seedDefaultBots(); // two default bots on first boot (idempotent by name)
   await startBinanceWs();
   void (async () => {
     try {
@@ -99,6 +104,10 @@ async function main(): Promise<void> {
       setMarketWarm();
       startIndicatorEngine();
       computeAll();
+      // 6. Bots (Phase 4): resume running bots, start cadence + trigger wakes.
+      //    Strictly after marketWarm (PLAN §16.9) so nothing wakes on a
+      //    half-filled candle store.
+      resumeBots();
     } catch (err) {
       logger.error({ err }, 'market warm-up failed');
     }
@@ -107,6 +116,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutdown requested');
     try {
+      stopBotScheduler();
+      stopTriggerEngine();
+      stopBustedCron();
       stopScheduler();
       stopProtector();
       stopEquityCron();

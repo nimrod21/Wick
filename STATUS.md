@@ -1,6 +1,6 @@
 # Wick — Status
 
-**Current phase:** 1 — Market data & indicators (done; 12h soak pending)
+**Current phase:** 4 — Bots + trigger engine (done; 24h soak deferred)
 
 ## Phase checklist
 
@@ -8,7 +8,7 @@
 - [x] Phase 1 — Market data & indicators (this wave; 12h soak + WS-drop heal not yet exercised)
 - [x] Phase 2 — Paper trading engine
 - [x] Phase 3 — LLM provider layer (keys not yet registered — router skips keyless providers; stub + Ollama are the offline paths)
-- [ ] Phase 4 — Bots + trigger engine
+- [x] Phase 4 — Bots + trigger engine (24h unattended soak deferred — needs provider keys)
 - [ ] Phase 5 — Learning & memory
 - [ ] Phase 6 — UI
 - [ ] Phase 7 — Hardening & service
@@ -122,3 +122,71 @@
 - Provider signup/setup doc: `apps/server/src/llm/README-setup.md`.
 - Ollama was NOT running during this phase's verification — end-to-end ran
   via the stub adapter; `ask` probes :11434 each run and auto-enables it.
+
+## Phase 4 notes / decisions (bots + trigger engine)
+
+- **No new dependencies.** New modules: `bots/{bot-store,bot-runner,snapshot,
+  scheduler,boot}.ts`, `market/trigger-engine.ts`, `api/bots.ts`; three bus
+  event kinds added to `@wick/shared` (`decision`, `trigger`, `bot_status`).
+- Boot order: … marketWarm → indicator pass → `resumeBots()` (log line per
+  running bot, busted re-check, cadence scheduler + trigger engine + hourly
+  busted cron). `seedDefaultBots()` runs before the WS connect, idempotent by
+  name — **Patience** and **Contrarian**, $1000 each, seeded `running`, with
+  provider_order rotated by one so model-vs-model has data from day one.
+- Wake queue: per-bot pending depth 1, absorption keeps the FRESHEST reason;
+  `pump()` is deferred to a microtask so several triggers fired in the same
+  tick coalesce into ONE decision (3 wakes → queued 1 / absorbed 2 / 1 row).
+  Global cap 3 LLM calls in flight.
+- Gates run before any snapshot work: status running → per-bot floor (10 min,
+  from `triggers.thresholds.per_bot_wake_floor_min`, protector rows excluded)
+  → trades-left-today → `poolRemaining() > 0`. **Deviation:** the trades-left
+  gate only applies when the bot is FLAT; holding a position it still wakes to
+  reassess and the guards veto the trade with `max_trades_day` (that is what
+  the IMPL-3 acceptance check observes).
+- Decision rows keep the LLM's intended `action` when guards veto (status
+  `vetoed` + `veto_reason`), rather than rewriting it to `wait` — PLAN §11
+  says vetoed scores as wait but must stay distinguishable, and the status
+  column carries that. Engine rejections land as `vetoed` /
+  `engine_<reason>`. `llm_failed` → action `wait`, no trade, no retry.
+- `snapshot_json` = the full prompt Snapshot plus a `meta` block
+  `{run, botId, triggerType, triggerDetail, priority, cadenceTf}` — the run
+  counter lives there (Phase 5 filters by it).
+- Scheduled wakes: one per (bot, tf, candle ts) — the 7 symbols all emit a
+  close for the same candle — staggered 0–30 s by FNV-1a hash of the bot id
+  (no `Math.random`). They route through `fireTrigger` as P3 `scheduled` so
+  they get the same trigger_log/budget treatment, but skip the per
+  (type × symbol) cooldown (the cadence is the discipline).
+- Trigger engine sources: `tick` (price_velocity P1, position_event P1),
+  `indicator` 1h (rsi_cross, macd_cross, bb_breakout P2), `candle` 1h close
+  (volume_spike P2, computed straight from the last 20 candle volumes),
+  `funding` (funding_flip P2), `fill` (position index refresh). rsi/atr/bb
+  state is primed from `indicator_values` at start, so a cross is detectable
+  on the first live candle after a restart. price_velocity also opens the
+  15-min ×2-slippage window via `setVolatilityWindow`.
+- `position_event` arms only after price moves 0.5% from entry (avoids the
+  open-a-position-instantly-satisfies-P&L-crossing loop) and wakes only the
+  owning bot. Drawdown-warning wakes are not wired as a separate source —
+  the busted check covers the kill line; revisit in Phase 6 if the UI wants it.
+- Budget gate (`budgetGate`, pure + unit-tested): P1 needs pool > 0 (it may
+  draw on the reserve); P2/P3 need pool > 30% reserve, and P2 additionally
+  needs pool > 50% of the day's total OR an open position in that symbol.
+- `trigger_log` gets one row per (evaluation × candidate bot) with fired 0/1
+  and the gate reason appended to `detail` in `[...]`; a matching trigger with
+  no eligible bot logs a single `bot_id NULL` row. Every row is mirrored on
+  the bus as a `trigger` event (gated ones included, for the dimmed UI).
+- `reset` liquidates at mid with **no fees and no fill rows** (bookkeeping,
+  not a trade), restores cash = bankroll_start, bumps `config.run`, and
+  DELETES that bot's `equity_snapshots` — the drawdown high-water mark is
+  derived from them, so an old run's peak would otherwise bust the new run
+  instantly. Decisions/fills keep their rows. Busted uses the same
+  liquidation path.
+- Tests: `pnpm tsx scripts/test-bots.ts` — 7 checks (e2e fill, max_trades_day
+  veto, rsi_cross fire + cooldown block, budget P1-vs-P3, absorption 3→1,
+  deterministic stagger, boot resume). It stops non-test bots, restores every
+  setting it lowers and purges its own rows; the stub provider is injected as
+  a temporary `providers.registry` row (`stub-e2e`).
+- Stale `apps/web/.next` (gitignored build output from the cockpit era) was
+  deleted — it made `pnpm -r typecheck` fail on pages removed in Phase 0.
+- **Deferred:** the 24h unattended two-bot soak. It needs at least one
+  provider key; with none registered every wake records `llm_failed` (free,
+  harmless, but proves nothing). Run it once keys are in the vault.

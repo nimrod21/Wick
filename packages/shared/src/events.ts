@@ -91,6 +91,53 @@ export type FillEvent = BaseEvent & {
   decisionId: number | null;
 };
 
+/**
+ * A bot decision was recorded (mirrors a `decisions` row; Phase 4).
+ * `status`: 'executed' (incl. plain waits) | 'vetoed' | 'llm_failed'.
+ */
+export type DecisionEvent = BaseEvent & {
+  kind: 'decision';
+  decisionId: number;
+  botId: number;
+  action: 'buy' | 'sell' | 'wait';
+  symbol: string | null;
+  sizePct: number | null;
+  confidence: number | null;
+  status: 'executed' | 'vetoed' | 'llm_failed';
+  triggerType: string;
+  triggerDetail: string | null;
+  provider: string | null;
+  model: string | null;
+  latencyMs: number | null;
+  vetoReason: string | null;
+  reasoning: string | null;
+};
+
+/**
+ * Trigger-engine evaluation that matched its condition (Phase 4, PLAN §9).
+ * `fired: false` means it matched but was gated (cooldown / budget / bot
+ * floor) — the UI shows those dimmed. Mirrors a `trigger_log` row.
+ */
+export type TriggerEvent = BaseEvent & {
+  kind: 'trigger';
+  botId: number | null;
+  type: string;              // 'rsi_cross' | 'scheduled' | ...
+  priority: 1 | 2 | 3;
+  symbol: string | null;
+  detail: string;
+  fired: boolean;
+  gateReason: string | null; // why fired=false
+};
+
+/** Bot lifecycle change (running/stopped/busted/reset). */
+export type BotStatusEvent = BaseEvent & {
+  kind: 'bot_status';
+  botId: number;
+  status: 'running' | 'stopped' | 'busted';
+  reason: string;
+  equity: number | null;
+};
+
 export type Event =
   | TickEvent
   | CandleEvent
@@ -99,7 +146,10 @@ export type Event =
   | FearGreedEvent
   | MarketWarmEvent
   | FillEvent
-  | OrderStatusEvent;
+  | OrderStatusEvent
+  | DecisionEvent
+  | TriggerEvent
+  | BotStatusEvent;
 
 export type EventKind = Event['kind'];
 
@@ -112,4 +162,7 @@ export const VALID_EVENT_KINDS: readonly EventKind[] = [
   'market_warm',
   'fill',
   'order_status',
+  'decision',
+  'trigger',
+  'bot_status',
 ];

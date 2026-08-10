@@ -23,17 +23,31 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db/client.js';
+import type { BotRow } from '../paper/engine.js';
 import {
   botView,
   createBot,
   getBot,
-  listBots,
+  isHumanBot,
+  listTradingBots,
   deleteBot,
   resetBot,
   startBot,
   stopBot,
   updateBot,
 } from '../bots/bot-store.js';
+
+/**
+ * Fleet lookup. The human trading account is a `bots` row too (IMPL-4) but it
+ * is NOT a bot: it must never be listed, started, deleted or reset from here —
+ * `/api/trade/*` owns it. Its read-only routes (positions/fills/equity/outcomes
+ * in `bots-read.ts` / `learn.ts`) stay open, which is exactly how /trade reuses
+ * them.
+ */
+function fleetBot(id: number): BotRow | undefined {
+  const bot = getBot(id);
+  return bot && !isHumanBot(bot) ? bot : undefined;
+}
 
 const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
 const limitSchema = z.object({ limit: z.coerce.number().int().positive().max(1000).optional() });
@@ -71,7 +85,7 @@ const patchSchema = z.object({
 });
 
 export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/', async () => ({ bots: listBots().map(botView) }));
+  app.get('/', async () => ({ bots: listTradingBots().map(botView) }));
 
   app.post('/', async (req, reply) => {
     const body = createSchema.safeParse(req.body);
@@ -90,7 +104,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/:id', async (req, reply) => {
     const params = paramsSchema.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
-    const bot = getBot(params.data.id);
+    const bot = fleetBot(params.data.id);
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
     return { bot: botView(bot) };
   });
@@ -102,6 +116,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     if (!body.success) {
       return reply.code(400).send({ error: 'bad body', issues: body.error.issues });
     }
+    if (!fleetBot(params.data.id)) return reply.code(404).send({ error: 'bot not found' });
     const bot = updateBot(params.data.id, {
       name: body.data.name,
       config: body.data.config,
@@ -114,6 +129,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
   app.delete('/:id', async (req, reply) => {
     const params = paramsSchema.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
+    if (!fleetBot(params.data.id)) return reply.code(404).send({ error: 'bot not found' });
     const result = deleteBot(params.data.id);
     if (result === 'not_found') return reply.code(404).send({ error: 'bot not found' });
     if (result === 'running') {
@@ -129,6 +145,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     app.post(path, async (req, reply) => {
       const params = paramsSchema.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
+      if (!fleetBot(params.data.id)) return reply.code(404).send({ error: 'bot not found' });
       const bot = fn(params.data.id);
       if (!bot) return reply.code(404).send({ error: 'bot not found' });
       return { bot: botView(bot) };

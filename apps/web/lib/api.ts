@@ -279,6 +279,61 @@ export const ModelStatSchema = z.object({
 });
 export type ModelStat = z.infer<typeof ModelStatSchema>;
 
+// ── trade (IMPL-4) ─────────────────────────────────────────────────────
+
+/** A human fill plus why it happened (protector exits carry sl:/tp: detail). */
+export const TradeFillSchema = FillSchema.extend({
+  trigger_type: z.string().nullable(),
+  trigger_detail: z.string().nullable(),
+});
+export type TradeFill = z.infer<typeof TradeFillSchema>;
+
+/** 'sl' / 'tp' when the protector closed it, otherwise a hand-placed trade. */
+export function fillReason(f: TradeFill): 'trade' | 'sl' | 'tp' {
+  if (f.trigger_type !== 'protector') return 'trade';
+  return f.trigger_detail?.startsWith('tp') ? 'tp' : 'sl';
+}
+
+export const TradeAccountSchema = z.object({
+  botId: num,
+  name: z.string(),
+  cash: num,
+  bankrollStart: num,
+  equity: nullNum,
+  drawdownPct: nullNum,
+  minNotional: num,
+  positions: z.array(PositionSchema),
+  fills: z.array(TradeFillSchema),
+});
+export type TradeAccount = z.infer<typeof TradeAccountSchema>;
+
+export interface OrderInput {
+  symbol: string;
+  side: 'buy' | 'sell';
+  notional?: number;
+  pct?: number;
+  sl_pct?: number | null;
+  tp_pct?: number | null;
+  note?: string;
+}
+
+const OrderResultSchema = z.object({
+  ok: z.boolean(),
+  decisionId: num,
+  fill: FillSchema,
+  cash: num,
+  equity: nullNum,
+});
+
+/** Engine rejections arrive as a 400 JSON body — surface the reason, not the blob. */
+export function orderError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const reason = /"reason":"([a-z_]+)"/.exec(raw)?.[1];
+  const detail = /"detail":"([^"]*)"/.exec(raw)?.[1];
+  if (!reason) return raw.slice(0, 160);
+  return `${reason.replace(/_/g, ' ')}${detail ? ` — ${detail}` : ''}`;
+}
+
 // ── intel (IMPL-3b) ────────────────────────────────────────────────────
 
 export const NewsItemSchema = z.object({
@@ -486,6 +541,30 @@ export const api = {
       'GET',
       `/api/notifications${qs({ limit })}`,
     ).then((r) => r.notifications),
+
+  /** Your own account — balance, equity, positions, fill history (IMPL-4). */
+  tradeAccount: (limit = 200) =>
+    request(TradeAccountSchema, 'GET', `/api/trade/account${qs({ limit })}`),
+
+  tradeOrder: (order: OrderInput) => request(OrderResultSchema, 'POST', '/api/trade/order', order),
+
+  tradeLevels: (symbol: string, levels: { sl_pct?: number | null; tp_pct?: number | null }) =>
+    request(
+      z.object({ ok: z.boolean(), positions: z.array(PositionSchema) }),
+      'PATCH',
+      '/api/trade/position',
+      { symbol, ...levels },
+    ),
+
+  tradeDeposit: (amount: number) =>
+    request(z.object({ ok: z.boolean(), cash: num, bankrollStart: num }), 'POST', '/api/trade/deposit', {
+      amount,
+    }),
+
+  tradeReset: (bankroll?: number) =>
+    request(z.object({ ok: z.boolean(), cash: num, bankrollStart: num }), 'POST', '/api/trade/reset', {
+      bankroll,
+    }),
 
   putSetting: (key: string, value: string) =>
     request(z.object({ ok: z.boolean() }), 'PUT', `/api/settings/${key}`, { value }),

@@ -90,7 +90,15 @@ export function defaultConfig(overrides: Partial<BotConfig> = {}): BotConfig {
   };
 }
 
-/** Parse a bot row's config_json, filling any missing field with defaults. */
+/**
+ * Parse a bot row's config_json, filling any missing field with defaults.
+ *
+ * Keys that are not part of `BotConfig` ride along untouched — `updateBot` and
+ * `resetBot` serialize this object straight back into `config_json`, so
+ * dropping an unknown key here would silently erase it (that is exactly how a
+ * deposit used to wipe the human account's `kind:'human'` marker and make the
+ * next boot mint a second account).
+ */
 export function parseConfig(bot: BotRow): BotConfig {
   let raw: Record<string, unknown> = {};
   try {
@@ -100,7 +108,7 @@ export function parseConfig(bot: BotRow): BotConfig {
     /* defaults */
   }
   const base = defaultConfig();
-  const out: BotConfig = { ...base };
+  const out: BotConfig = { ...raw, ...base };
   for (const key of Object.keys(base) as Array<keyof BotConfig>) {
     const v = raw[key];
     if (v === undefined || v === null) continue;
@@ -331,6 +339,61 @@ export function checkBustedAll(): number {
   let n = 0;
   for (const bot of listRunningBots()) if (checkBusted(bot.id)) n += 1;
   return n;
+}
+
+// ── human account (IMPL-4 trade) ───────────────────────────────────────
+
+/** `config_json.kind` marking the one row that is Luka, not a bot. */
+export const HUMAN_KIND = 'human';
+export const HUMAN_NAME = 'You';
+export const HUMAN_START_BANKROLL = 10_000;
+
+/**
+ * The manual trader is a normal `bots` row (`kind:'human'`, status permanently
+ * `stopped`) so the paper engine, protector, equity cron and the model
+ * scoreboard treat it exactly like a bot — nothing had to be re-implemented.
+ * Nothing ever wakes it: the scheduler, trigger engine and journal all iterate
+ * `listRunningBots()`, and `checkBusted` returns early for non-running rows.
+ *
+ * `kind` deliberately lives OUTSIDE `BotConfig`: `parseConfig` only keeps keys
+ * that exist in the defaults, so the marker is read straight off `config_json`
+ * and can never be dropped by a config merge.
+ */
+export function isHumanBot(bot: BotRow): boolean {
+  try {
+    const raw: unknown = JSON.parse(bot.config_json);
+    return typeof raw === 'object' && raw !== null && (raw as { kind?: unknown }).kind === HUMAN_KIND;
+  } catch {
+    return false;
+  }
+}
+
+/** The fleet — every bot except the human account (bots page, dashboard). */
+export function listTradingBots(): BotRow[] {
+  return listBots().filter((b) => !isHumanBot(b));
+}
+
+export function getHumanBot(): BotRow | undefined {
+  return listBots().find(isHumanBot);
+}
+
+/** Idempotent boot step: exactly one human account per install. */
+export function ensureHumanAccount(): BotRow {
+  const existing = getHumanBot();
+  if (existing) return existing;
+  const config = {
+    ...defaultConfig({ personality: 'Manual trading — no LLM, no wakes.' }),
+    kind: HUMAN_KIND,
+  };
+  const info = db
+    .prepare(
+      `INSERT INTO bots (name, status, bankroll_start, cash, config_json, created_ts)
+       VALUES (?, 'stopped', ?, ?, ?, ?)`,
+    )
+    .run(HUMAN_NAME, HUMAN_START_BANKROLL, HUMAN_START_BANKROLL, JSON.stringify(config), nowMs());
+  const bot = getBot(Number(info.lastInsertRowid)) as BotRow;
+  logger.info({ bot: bot.id, bankroll: HUMAN_START_BANKROLL }, 'human trading account created');
+  return bot;
 }
 
 // ── seed (IMPL-3 §4.1: two bots on first migrate) ──────────────────────

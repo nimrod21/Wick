@@ -14,28 +14,31 @@ import { equity, getBot, getDrawdown, getPositions, midPrice } from '../paper/en
 const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
 const limitSchema = z.object({ limit: z.coerce.number().int().positive().max(1000).optional() });
 
+/** Open positions marked to live mid — shared with `/api/trade/account`. */
+export function positionViews(botId: number): Array<Record<string, unknown>> {
+  return getPositions(botId).map((p) => {
+    const mid = midPrice(p.symbol);
+    return {
+      symbol: p.symbol,
+      qty: p.qty,
+      avgEntry: p.avg_entry,
+      stopPrice: p.stop_price,
+      tpPrice: p.tp_price,
+      openedTs: p.opened_ts,
+      mid,
+      valueUsd: mid !== null ? p.qty * mid : null,
+      unrealizedPnl: mid !== null ? (mid - p.avg_entry) * p.qty : null,
+    };
+  });
+}
+
 export async function registerBotsReadRoutes(app: FastifyInstance): Promise<void> {
   app.get('/:id/positions', async (req, reply) => {
     const params = paramsSchema.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
     const bot = getBot(params.data.id);
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
-
-    const positions = getPositions(bot.id).map((p) => {
-      const mid = midPrice(p.symbol);
-      return {
-        symbol: p.symbol,
-        qty: p.qty,
-        avgEntry: p.avg_entry,
-        stopPrice: p.stop_price,
-        tpPrice: p.tp_price,
-        openedTs: p.opened_ts,
-        mid,
-        valueUsd: mid !== null ? p.qty * mid : null,
-        unrealizedPnl: mid !== null ? (mid - p.avg_entry) * p.qty : null,
-      };
-    });
-    return { botId: bot.id, positions };
+    return { botId: bot.id, positions: positionViews(bot.id) };
   });
 
   app.get('/:id/fills', async (req, reply) => {

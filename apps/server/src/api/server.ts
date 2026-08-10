@@ -10,6 +10,7 @@ import { registerCandlesRoutes } from './candles.js';
 import { registerMarketRoutes } from './market.js';
 import { registerBotsReadRoutes } from './bots-read.js';
 import { registerBotsRoutes } from './bots.js';
+import { registerTradeRoutes } from './trade.js';
 import { registerLearnBotRoutes, registerStatsRoutes } from './learn.js';
 import { registerProvidersRoutes } from './providers.js';
 import { registerIntelRoutes, registerNotificationsRoutes } from './intel.js';
@@ -34,6 +35,8 @@ export async function buildServer() {
   await app.register(registerMarketRoutes, { prefix: '/api/market' });
   await app.register(registerBotsReadRoutes, { prefix: '/api/bots' });
   await app.register(registerBotsRoutes, { prefix: '/api/bots' });
+  // IMPL-4 manual trading (human account, same paper engine).
+  await app.register(registerTradeRoutes, { prefix: '/api/trade' });
   // Phase 5 learning routes.
   await app.register(registerLearnBotRoutes, { prefix: '/api/bots' });
   await app.register(registerStatsRoutes, { prefix: '/api/stats' });

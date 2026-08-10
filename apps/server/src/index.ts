@@ -34,7 +34,7 @@ import { startEquityCron, stopEquityCron } from './paper/engine.js';
 import { startProtector, stopProtector } from './paper/protector.js';
 import { startTriggerEngine, stopTriggerEngine } from './market/trigger-engine.js';
 import { startBotScheduler, stopBotScheduler } from './bots/scheduler.js';
-import { seedDefaultBots } from './bots/bot-store.js';
+import { ensureHumanAccount, seedDefaultBots } from './bots/bot-store.js';
 import { resumeBots, stopBustedCron } from './bots/boot.js';
 import { startEvaluatorCron, stopEvaluatorCron } from './learn/evaluator.js';
 import { startIndicatorStats, stopIndicatorStats } from './learn/indicator-stats.js';
@@ -107,6 +107,7 @@ async function main(): Promise<void> {
   startEquityCron();
   startProtector(); // arms its SL/TP index once marketWarm fires below
   seedDefaultBots(); // two default bots on first boot (idempotent by name)
+  ensureHumanAccount(); // the human trading account (idempotent, never woken)
   await startBinanceWs();
   void (async () => {
     try {

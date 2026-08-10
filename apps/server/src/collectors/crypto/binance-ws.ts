@@ -4,8 +4,14 @@
  * Per active asset:
  *   <symbol>@trade       → TickEvent + last-price cache (paper engine reads this)
  *   <symbol>@miniTicker  → 24h stats cache (last/open/high/low/volume) for /summary
- *   <symbol>@kline_1m    → closed 1m candles persisted + candle events
- *   <symbol>@kline_1h    → closed 1h candles persisted + candle events (indicator engine wakes on these)
+ *   <symbol>@kline_<tf>  → one stream per DISPLAY timeframe (1m/15m/1h/4h/1d).
+ *                          Closed klines are persisted + emitted (`closed:true`);
+ *                          the indicator/trigger/scheduler engines wake on those.
+ *
+ * FORMING klines (`k.x === false`) are emitted as `closed:false` candle events,
+ * throttled to ≤1/s per (symbol, tf), so charts move with the market instead of
+ * only on close (IMPL-6 Part A). They are NEVER persisted and every bus consumer
+ * that touches state ignores them (`if (!e.closed) return`).
  *
  * Reconnect: exponential backoff 1s → 30s cap. Heartbeat timeout forces
  * reconnect after 10 min of silence. On reconnect, REST gap-backfill 1m/1h.
@@ -30,7 +36,16 @@ import {
 const WS_BASE = 'wss://stream.binance.com:9443/stream';
 const BACKOFF_SCHEDULE = [1000, 2000, 4000, 8000, 16000, 30000];
 const HEARTBEAT_TIMEOUT_MS = 10 * 60 * 1000;
-const WS_TFS: WickTf[] = ['1m', '1h'];
+/** Every timeframe the charts can display — one kline stream each. */
+const WS_TFS: WickTf[] = ['1m', '15m', '1h', '4h', '1d'];
+/**
+ * Forming-candle throttle. Binance already pushes kline updates at ~1/s, so
+ * this is a safety cap, not the pacer — and it must sit BELOW 1000 ms or
+ * normal frame jitter drops every other frame and halves the rate to 0.5/s
+ * (measured). 750 ms lets every native frame through while still capping a
+ * chattier stream at ~1.3/s per (symbol, tf).
+ */
+const FORMING_MIN_INTERVAL_MS = 750;
 
 interface BinanceKlineMsg {
   e: 'kline';
@@ -113,6 +128,8 @@ const lastPriceBySymbol = new Map<string, number>();
 const tickerStatsBySymbol = new Map<string, TickerStats>();
 /** key `${symbol}:${tf}` → last persisted candle open ts (ms). */
 const lastCandleTs = new Map<string, number>();
+/** key `${symbol}:${tf}` → when the last FORMING candle event was emitted (ms). */
+const lastFormingEmitAt = new Map<string, number>();
 
 function nextEventId(): number {
   return eventIdSeq++;
@@ -124,8 +141,7 @@ function buildStreamsUrl(symbols: string[]): string {
     const s = sym.toLowerCase();
     streams.push(`${s}@trade`);
     streams.push(`${s}@miniTicker`);
-    streams.push(`${s}@kline_1m`);
-    streams.push(`${s}@kline_1h`);
+    for (const tf of WS_TFS) streams.push(`${s}@kline_${tf}`);
   }
   return `${WS_BASE}?streams=${streams.join('/')}`;
 }
@@ -154,6 +170,7 @@ function handleKline(symbol: string, msg: BinanceKlineMsg): void {
     v: parseFloat(k.v),
   };
 
+  const key = `${symbol}:${tf}`;
   if (k.x) {
     if (buffering) {
       // Boot backfill still running — hold closed klines, apply after.
@@ -161,9 +178,16 @@ function handleKline(symbol: string, msg: BinanceKlineMsg): void {
       return;
     }
     persistClosedKline(candle);
-  } else if (buffering) {
-    // Forming candles are UI-only; suppress until market is warm.
-    return;
+    // The next period's first forming tick must not be swallowed by the
+    // throttle window this close sits in.
+    lastFormingEmitAt.delete(key);
+  } else {
+    // Forming candles are UI-only: never persisted, throttled, and suppressed
+    // until the market is warm.
+    if (buffering) return;
+    const now = Date.now();
+    if (now - (lastFormingEmitAt.get(key) ?? 0) < FORMING_MIN_INTERVAL_MS) return;
+    lastFormingEmitAt.set(key, now);
   }
 
   const evt: CandleEvent = {
@@ -306,7 +330,7 @@ async function connect(): Promise<void> {
 
   const url = buildStreamsUrl(symbols);
   logger.info(
-    { symbolCount: symbols.length, streams: symbols.length * 4 },
+    { symbolCount: symbols.length, streams: symbols.length * (2 + WS_TFS.length) },
     'binance ws: connecting',
   );
 

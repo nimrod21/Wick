@@ -159,7 +159,14 @@ export default function TradePage() {
           {(candles.data?.length ?? 0) === 0 ? (
             <Empty>no candles for {symbol} {tf}</Empty>
           ) : (
-            <CandleChart candles={candles.data!} markers={markers} priceLines={priceLines} height={380} />
+            <CandleChart
+              candles={candles.data!}
+              symbol={symbol}
+              tf={tf}
+              markers={markers}
+              priceLines={priceLines}
+              height={380}
+            />
           )}
         </Panel>
 

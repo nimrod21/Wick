@@ -195,7 +195,13 @@ export default function BotPage() {
           {(candles.data?.length ?? 0) === 0 ? (
             <Empty>no candles for {activeSymbol} {tf}</Empty>
           ) : (
-            <CandleChart candles={candles.data!} markers={markers} priceLines={priceLines} />
+            <CandleChart
+              candles={candles.data!}
+              symbol={activeSymbol}
+              tf={tf}
+              markers={markers}
+              priceLines={priceLines}
+            />
           )}
           <div className="flex flex-wrap gap-3 border-t border-line p-2 text-xs">
             {(positions.data ?? []).length === 0 ? (

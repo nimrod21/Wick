@@ -97,7 +97,7 @@ export default function MarketPage() {
           {(candles.data?.length ?? 0) === 0 ? (
             <Empty>no candles for {symbol} {tf}</Empty>
           ) : (
-            <CandleChart candles={candles.data!} height={360} />
+            <CandleChart candles={candles.data!} symbol={symbol} tf={tf} height={360} />
           )}
         </Panel>
 

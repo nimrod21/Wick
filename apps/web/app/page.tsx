@@ -67,20 +67,28 @@ function ChartPane({ symbol }: { symbol: string }) {
   });
   const summary = useQuery({ queryKey: ['market-summary'], queryFn: api.summary, refetchInterval: 60_000 });
 
+  // Closed candles still trigger a refetch — CandleChart merges it into the
+  // live series (no viewport reset), and it self-heals any gap the SSE missed.
   useLive('candle', (e) => {
     if (e.symbol === symbol && e.tf === tf && e.closed) {
       void qc.invalidateQueries({ queryKey: ['candles', symbol, tf] });
     }
   });
+  // The header price must track the chip and the chart, not the 60s summary.
+  const [tick, setTick] = useState<{ symbol: string; price: number } | null>(null);
+  useLive('tick', (e) => {
+    if (e.symbol === symbol) setTick({ symbol: e.symbol, price: e.price });
+  });
 
   const row = summary.data?.symbols.find((s) => s.symbol === symbol);
+  const lastPrice = tick?.symbol === symbol ? tick.price : (row?.lastPrice ?? null);
 
   return (
     <Panel
       title={
         <span className="flex items-baseline gap-2">
           <span className="text-fg">{symbol}</span>
-          <span className="tnum normal-case tracking-normal">{price(row?.lastPrice ?? null)}</span>
+          <span className="tnum normal-case tracking-normal">{price(lastPrice)}</span>
           <span
             className={`tnum normal-case tracking-normal ${
               row?.changePct24h === null || row?.changePct24h === undefined
@@ -115,7 +123,7 @@ function ChartPane({ symbol }: { symbol: string }) {
           {candles.isLoading ? 'loading candles…' : `no candles for ${symbol} ${tf}`}
         </Empty>
       ) : (
-        <CandleChart candles={candles.data!} height={420} />
+        <CandleChart candles={candles.data!} symbol={symbol} tf={tf} height={420} />
       )}
     </Panel>
   );

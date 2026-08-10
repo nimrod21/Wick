@@ -44,24 +44,25 @@ export default function DashboardPage() {
     <div className="space-y-4">
       <PixelTitle className="text-green">DASHBOARD</PixelTitle>
 
-      {/* [watchlist | chart | asset column] on wide screens. Flex, not a
-          3-column grid, so collapsing the watchlist to its rail reflows the
-          row on its own — the page never has to know the rail's width. */}
+      {/* [watchlist | center | right] — chart stays top-central; signals+macro
+          tuck under it at the same width; the asset stack fills the right
+          column. Flex (not grid) so the watchlist rail collapse reflows alone. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} />
-        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
-          <ChartPane symbol={symbol} />
-          <div className="space-y-4">
+        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="min-w-0 space-y-4">
+            <ChartPane symbol={symbol} />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SignalsPanel />
+              <MacroChips />
+            </div>
+          </div>
+          <div className="min-w-0 space-y-4">
             <AssetPanel symbol={symbol} />
             <NewsPanel asset={asset} />
             <WhalesPanel asset={asset} />
           </div>
         </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <SignalsPanel />
-        <MacroChips />
       </div>
 
       <BotStrip />

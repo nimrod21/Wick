@@ -147,13 +147,19 @@ export function OrderTicket({ symbol, account }: { symbol: string; account?: Tra
         {place.isPending ? 'sending…' : `${side} ${shortSymbol(symbol)}`}
       </Btn>
 
-      {error && <p className="text-[11px] text-red">{error}</p>}
-      {ok && !error && <p className="text-[11px] text-green">{ok}</p>}
-      {side === 'sell' && (
-        <p className="text-[10px] text-muted">
-          selling closes part of the position; a remainder under $0.50 closes it fully
-        </p>
-      )}
+      {/* Fixed-height status line — content swaps, the ticket never resizes,
+          nothing below it moves. */}
+      <p
+        className={`min-h-[15px] text-[10px] ${
+          error ? 'text-red' : ok ? 'text-green' : 'text-muted'
+        }`}
+      >
+        {error ??
+          ok ??
+          (side === 'sell'
+            ? 'selling closes part of the position; a remainder under $0.50 closes it fully'
+            : ' ')}
+      </p>
     </div>
   );
 }

@@ -21,7 +21,7 @@ import { useLive } from '@/lib/sse';
 import { Empty, Panel } from '@/components/ui';
 import { ago } from '@/lib/format';
 
-const TOP_N = 5;
+const TOP_N = 9;
 
 function sentimentClass(score: number | null): string {
   if (score === null) return 'bg-line';

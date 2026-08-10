@@ -22,7 +22,7 @@ import { ago, usd } from '@/lib/format';
 
 /** Dashboard-only floor — the Intel tab still defaults to "any size". */
 const MIN_USD = 1_000_000;
-const TOP_N = 4;
+const TOP_N = 7;
 
 const DIRECTION = {
   inflow: { arrow: '↓', cls: 'text-red', label: 'into exchange — supply to sell' },

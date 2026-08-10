@@ -2,8 +2,14 @@
  * Cron-driven scheduler (IMPL-1 §1.5). Owns:
  *   - funding poll lifecycle   (collector self-drives a 15-min cron)
  *   - fear & greed lifecycle   (collector self-drives a daily cron)
+ *   - news / whale / macro lifecycle (IMPL-3a — each self-drives its own
+ *     cron: 5-min RSS, 5-min BTC whale sweep, 10-min Yahoo macro)
  *   - 5-min higher-timeframe REST refresh (15m/4h/1d — see STATUS.md)
  *   - hourly candle-gap self-heal (detect missing candles, REST backfill)
+ *
+ * Every intel collector tolerates network failure silently and keeps
+ * serving its last-known-good value, so a dead upstream degrades the
+ * affected indicators to `neutral` instead of taking the server down.
  */
 
 import cron, { type ScheduledTask } from 'node-cron';
@@ -14,6 +20,9 @@ import {
 } from '../collectors/crypto/binance-rest.js';
 import { startFearGreed, stopFearGreed } from '../collectors/macro/fear-greed.js';
 import { startFundingOi, stopFundingOi } from '../collectors/macro/funding-oi.js';
+import { startMacro, stopMacro } from '../collectors/macro/yahoo-macro.js';
+import { startRssNews, stopRssNews } from '../collectors/news/rss.js';
+import { startBtcWhales, stopBtcWhales } from '../collectors/onchain/btc-whales.js';
 
 const tasks: ScheduledTask[] = [];
 let running = false;
@@ -47,6 +56,9 @@ export function startScheduler(): void {
   try {
     startFundingOi();
     startFearGreed();
+    startMacro();
+    startRssNews();
+    startBtcWhales();
   } catch (err) {
     logger.error({ err }, 'scheduler: macro collectors failed to start');
   }
@@ -68,6 +80,9 @@ export function stopScheduler(): void {
   try {
     stopFearGreed();
     stopFundingOi();
+    stopMacro();
+    stopRssNews();
+    stopBtcWhales();
   } catch (err) {
     logger.error({ err }, 'scheduler: macro stop failed');
   }

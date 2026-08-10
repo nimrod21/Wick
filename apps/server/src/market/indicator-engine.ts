@@ -1,7 +1,9 @@
 /**
  * Indicator engine — consumes closed-kline bus events (acts ONLY on candle
- * close), computes the 8-indicator set per symbol on the 1h timeframe,
- * writes `indicator_values` rows and publishes `indicator` bus events.
+ * close), computes every registered indicator per symbol on the 1h
+ * timeframe, writes `indicator_values` rows and publishes `indicator` bus
+ * events. The TA set (8) plus the IMPL-3a intel set (news_sentiment,
+ * news_burst, whale_flow, gold, oil, dxy, vix) — one registry, one pipeline.
  *
  * Math lives in core/indicators.ts (pure). Vote rules live in ONE exported
  * const (`INDICATOR_DEFS`) keyed by indicator name — Phase 5 stats join on
@@ -28,6 +30,10 @@ import {
 import { getActiveSymbols } from '../collectors/crypto/binance-rest.js';
 import { getLatestFunding } from '../collectors/macro/funding-oi.js';
 import { getLatestFearGreed } from '../collectors/macro/fear-greed.js';
+import { getMacroQuote } from '../collectors/macro/yahoo-macro.js';
+import { newsBurstRatio, newsSentimentFor } from '../collectors/news/rss.js';
+import { whaleNetFlowUsd } from '../collectors/onchain/btc-whales.js';
+import { getIntelThresholds, type IntelThresholds } from '../collectors/intel-settings.js';
 import { isMarketWarm } from './market-state.js';
 
 /** The timeframe indicators vote on (IMPL-1 §1.3). */
@@ -45,6 +51,16 @@ export interface IndicatorCtx {
   funding: number | null;
   /** Latest Fear & Greed index 0–100, null if never polled. */
   fearGreed: number | null;
+  /** Mean lexicon sentiment of this symbol's last-24h headlines, or null. */
+  newsSentiment: number | null;
+  /** Headline rate, last 1h vs the 7d hourly baseline (1.0 = normal). */
+  newsBurst: number | null;
+  /** Net 24h exchange flow in USD, outflow-positive. Null with no data. */
+  whaleFlowUsd: number | null;
+  /** Macro day-change % by indicator name ('gold'|'oil'|'dxy'|'vix'). */
+  macroChangePct: Record<string, number | null>;
+  /** Runtime-editable vote thresholds (settings row `intel.thresholds`). */
+  intel: IntelThresholds;
 }
 
 export interface IndicatorResult {
@@ -153,7 +169,74 @@ export const INDICATOR_DEFS: Record<string, IndicatorDef> = {
       return { value: fearGreed, vote };
     },
   },
+
+  // ── IMPL-3a intel indicators ──────────────────────────────────────────
+  // Same 1:1 name join as the TA set: `indicator_stats` rows key off these
+  // exact names, so renaming one resets its learned weight.
+
+  news_sentiment: {
+    rule: 'Mean lexicon sentiment of the last 24h of headlines tagged with this asset: > +thr bull · < −thr bear · else neutral. Value is −1..+1.',
+    compute: ({ newsSentiment, intel }) => {
+      if (newsSentiment === null) return { value: null, vote: 'neutral' };
+      const thr = intel.news_sentiment_abs;
+      const vote: Vote =
+        newsSentiment > thr ? 'bull' : newsSentiment < -thr ? 'bear' : 'neutral';
+      return { value: newsSentiment, vote };
+    },
+  },
+  news_burst: {
+    rule: 'Headline rate, last 1h vs the 7d hourly baseline (1.0 = normal). No vote — a burst has no direction of its own; it is context for the other reads, like ATR.',
+    scope: 'global',
+    compute: ({ newsBurst }) => ({ value: newsBurst, vote: null }),
+  },
+  whale_flow: {
+    rule: 'Net 7d BTC exchange flow in USD, outflow-positive: > +thr bull (coins leaving exchanges) · < −thr bear (coins arriving) · else neutral. Exchange↔exchange and non-exchange whale moves are excluded.',
+    // Global, not BTC-scoped: exchange flow is read as a market-wide
+    // risk signal (and the ETH/SOL collectors will fold into the same
+    // aggregate once their keys exist), so every symbol gets the reading.
+    scope: 'global',
+    compute: ({ whaleFlowUsd, intel }) => {
+      if (whaleFlowUsd === null) return { value: null, vote: 'neutral' };
+      const thr = intel.whale_flow_usd;
+      const vote: Vote =
+        whaleFlowUsd > thr ? 'bull' : whaleFlowUsd < -thr ? 'bear' : 'neutral';
+      return { value: whaleFlowUsd, vote };
+    },
+  },
+  gold: {
+    rule: 'Gold (GC=F) day change %: > +1% bull · < −1% bear · else neutral. Same-direction — gold and BTC share the debasement/liquidity bid.',
+    scope: 'global',
+    compute: (ctx) => macroVote(ctx, 'gold', false),
+  },
+  oil: {
+    rule: 'WTI crude (CL=F) day change %: > +2% bull · < −2% bear · else neutral. Same-direction — oil is the growth/risk-on proxy here.',
+    scope: 'global',
+    compute: (ctx) => macroVote(ctx, 'oil', false),
+  },
+  dxy: {
+    rule: 'Dollar index (DX-Y.NYB) day change %: INVERSE — > +0.5% bear · < −0.5% bull · else neutral. A bid dollar drains risk assets.',
+    scope: 'global',
+    compute: (ctx) => macroVote(ctx, 'dxy', true),
+  },
+  vix: {
+    rule: 'VIX (^VIX) day change %: INVERSE — > +10% bear · < −10% bull · else neutral. A fear spike is risk-off.',
+    scope: 'global',
+    compute: (ctx) => macroVote(ctx, 'vix', true),
+  },
 };
+
+/**
+ * Shared threshold-move rule for the four macro indicators. `inverse` flips
+ * the sign (dxy, vix) — the one rule difference RESEARCH.md called out.
+ */
+function macroVote(ctx: IndicatorCtx, name: string, inverse: boolean): IndicatorResult {
+  const change = ctx.macroChangePct[name] ?? null;
+  if (change === null) return { value: null, vote: 'neutral' };
+  const thr = ctx.intel.macro_move_pct[name as keyof IntelThresholds['macro_move_pct']] ?? 1;
+  const signed = inverse ? -change : change;
+  const vote: Vote = signed > thr ? 'bull' : signed < -thr ? 'bear' : 'neutral';
+  return { value: change, vote };
+}
 
 export const INDICATOR_NAMES = Object.keys(INDICATOR_DEFS);
 
@@ -204,6 +287,16 @@ export function computeForSymbol(symbol: string, tf: string = INDICATOR_TF): num
     volumes: candles.map((c) => c.v),
     funding: getLatestFunding(symbol)?.rate ?? null,
     fearGreed: getLatestFearGreed()?.value ?? null,
+    newsSentiment: newsSentimentFor(symbol),
+    newsBurst: newsBurstRatio(),
+    whaleFlowUsd: whaleNetFlowUsd(),
+    macroChangePct: {
+      gold: getMacroQuote('gold')?.changePct ?? null,
+      oil: getMacroQuote('oil')?.changePct ?? null,
+      dxy: getMacroQuote('dxy')?.changePct ?? null,
+      vix: getMacroQuote('vix')?.changePct ?? null,
+    },
+    intel: getIntelThresholds(),
   };
   const ts = candles[candles.length - 1]!.ts;
 

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { db } from './client.js';
 import { nowMs } from '../util/time.js';
 import { logger } from '../util/logger.js';
+import { INTEL_DEFAULTS } from '../collectors/intel-settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,6 +70,9 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
     p1_reserve_pct: 30,
     p2_pool_min_pct: 50,
   },
+  // IMPL-3a intel collectors + their indicator vote thresholds. Shape and
+  // defaults live in collectors/intel-settings.ts; this row only seeds them.
+  'intel.thresholds': INTEL_DEFAULTS,
   'providers.registry': [
     { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', models: ['deepseek/deepseek-chat-v3-0324:free'], rpm: 20, rpd: 50, enabled: true },
     { id: 'groq', baseUrl: 'https://api.groq.com/openai/v1', models: ['llama-3.3-70b-versatile'], rpm: 30, rpd: 1000, enabled: true },

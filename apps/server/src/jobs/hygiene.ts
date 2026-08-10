@@ -25,6 +25,11 @@ import { nowMs } from '../util/time.js';
 
 export const CANDLE_1M_RETENTION_MS = 14 * 86_400_000;
 export const TRIGGER_LOG_RETENTION_MS = 30 * 86_400_000;
+/** IMPL-3a: the 5-min RSS poller would otherwise grow without bound.
+ *  60d is far past `news_burst`'s 7d baseline window. */
+export const NEWS_RETENTION_MS = 60 * 86_400_000;
+/** 6 quotes / 10 min. 180d keeps the Intel page's history cheap. */
+export const MACRO_RETENTION_MS = 180 * 86_400_000;
 /** A fill this recently means the engine is active — don't take the lock. */
 export const VACUUM_FILL_QUIET_MS = 60_000;
 export const BACKUP_KEEP = 3;
@@ -34,9 +39,12 @@ export const BACKUP_DIR = path.join(path.dirname(DB_PATH), 'backups');
 export interface PruneResult {
   candles1m: number;
   triggerLog: number;
+  newsItems: number;
+  macroQuotes: number;
 }
 
-/** Delete aged rows. Idempotent, cheap, safe to run any time. */
+/** Delete aged rows. Idempotent, cheap, safe to run any time.
+ *  `whale_moves` is never pruned — that history is the product. */
 export function prune(ts: number = nowMs()): PruneResult {
   const candles = db
     .prepare("DELETE FROM candles WHERE tf = '1m' AND ts < ?")
@@ -44,8 +52,19 @@ export function prune(ts: number = nowMs()): PruneResult {
   const triggers = db
     .prepare('DELETE FROM trigger_log WHERE ts < ?')
     .run(ts - TRIGGER_LOG_RETENTION_MS);
-  const result = { candles1m: candles.changes, triggerLog: triggers.changes };
-  if (result.candles1m > 0 || result.triggerLog > 0) {
+  const news = db
+    .prepare('DELETE FROM news_items WHERE ts < ?')
+    .run(ts - NEWS_RETENTION_MS);
+  const macro = db
+    .prepare('DELETE FROM macro_quotes WHERE ts < ?')
+    .run(ts - MACRO_RETENTION_MS);
+  const result = {
+    candles1m: candles.changes,
+    triggerLog: triggers.changes,
+    newsItems: news.changes,
+    macroQuotes: macro.changes,
+  };
+  if (Object.values(result).some((n) => n > 0)) {
     logger.info(result, 'hygiene: pruned aged rows');
   }
   return result;

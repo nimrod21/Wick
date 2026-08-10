@@ -58,6 +58,40 @@ export type FearGreedEvent = BaseEvent & {
   classification: string;
 };
 
+/** One de-duplicated RSS headline (mirrors a `news_items` row). */
+export type NewsEvent = BaseEvent & {
+  kind: 'news';
+  title: string;
+  url: string;
+  /** Base tickers the tagger matched, e.g. ["BTC","ETH"]. */
+  assets: string[];
+  /** Lexicon score in [-1,1]; null = no sentiment word in the headline. */
+  sentiment: number | null;
+};
+
+/**
+ * A large on-chain move by a watched address (mirrors a `whale_moves` row).
+ * direction: 'inflow' = INTO an exchange wallet (bearish), 'outflow' = OUT
+ * of one (bullish), 'internal' = exchange↔exchange or a non-exchange whale.
+ */
+export type WhaleEvent = BaseEvent & {
+  kind: 'whale';
+  chain: 'btc' | 'eth' | 'sol';
+  amount: number;
+  usd: number | null;
+  direction: 'inflow' | 'outflow' | 'internal';
+  tx: string;
+  addressTag: string | null;
+};
+
+/** Macro quote poll result (Yahoo chart API). `changePct` is vs previous close. */
+export type MacroEvent = BaseEvent & {
+  kind: 'macro';
+  symbol: string;
+  price: number;
+  changePct: number | null;
+};
+
 /** Fired once per boot when historical backfill completes (PLAN §16.9). */
 export type MarketWarmEvent = BaseEvent & {
   kind: 'market_warm';
@@ -165,6 +199,9 @@ export type Event =
   | IndicatorEvent
   | FundingEvent
   | FearGreedEvent
+  | NewsEvent
+  | WhaleEvent
+  | MacroEvent
   | MarketWarmEvent
   | FillEvent
   | OrderStatusEvent
@@ -181,6 +218,9 @@ export const VALID_EVENT_KINDS: readonly EventKind[] = [
   'indicator',
   'funding',
   'fear_greed',
+  'news',
+  'whale',
+  'macro',
   'market_warm',
   'fill',
   'order_status',

@@ -104,10 +104,7 @@ export default function TradePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-3">
-        <PixelTitle className="text-green">TRADE</PixelTitle>
-        <YouVsBots models={models.data} />
-      </div>
+      <PixelTitle className="text-green">TRADE</PixelTitle>
 
       {/* The dashboard's picker, verbatim (compact variant): one watchlist
           component for the whole app, one batched tick subscription. */}
@@ -164,6 +161,12 @@ export default function TradePage() {
           </Panel>
           <Panel title={`Account — ${account.data?.name ?? 'you'}`}>
             <AccountBox account={account.data} />
+            <div className="mt-3 border-t border-line pt-2">
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted">
+                you vs bots (4h scoreboard)
+              </div>
+              <YouVsBots models={models.data} />
+            </div>
           </Panel>
         </div>
         </div>

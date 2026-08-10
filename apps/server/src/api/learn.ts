@@ -6,16 +6,23 @@
  *   GET /api/bots/:id/journal?kind=   — reflections and/or lessons + current lessons
  *   GET /api/bots/:id/outcomes        — decisions joined with their 1h/4h/24h scores
  *   GET /api/stats/models             — model-vs-model scoreboard across bots
+ *   GET /api/stats/indicators         — indicator track record across bots (IMPL-2)
  *
  * Registered under two prefixes (see api/server.ts): the first three under
- * `/api/bots`, the scoreboard under `/api/stats`.
+ * `/api/bots`, the rollups under `/api/stats`.
  */
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { getBot } from '../paper/engine.js';
-import { listIndicatorStats } from '../learn/indicator-stats.js';
+import {
+  DISABLE_FLOOR,
+  SAMPLE_FLOOR,
+  laplaceHitRate,
+  listIndicatorStats,
+} from '../learn/indicator-stats.js';
+import { listIndicatorDefs } from '../market/indicator-engine.js';
 import { getLessons } from '../learn/journal.js';
 
 const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -131,6 +138,17 @@ export async function registerLearnBotRoutes(app: FastifyInstance): Promise<void
   });
 }
 
+interface IndicatorStatJoinRow {
+  bot_id: number;
+  indicator: string;
+  samples: number;
+  hits: number;
+  weight: number;
+  enabled: number;
+  updated_ts: number;
+  bot_name: string | null;
+}
+
 interface ModelAggRow {
   provider: string | null;
   model: string | null;
@@ -188,5 +206,94 @@ export async function registerStatsRoutes(app: FastifyInstance): Promise<void> {
           .sort((a, b) => a - b),
       })),
     };
+  });
+
+  /**
+   * Indicator track record across the whole fleet (IMPL-2). Driven by
+   * `INDICATOR_DEFS`, NOT by whatever happens to be in `indicator_stats`, so
+   * an indicator that has never been scored still gets a row with its
+   * "collecting samples: n/30" progress instead of vanishing from the page.
+   */
+  app.get('/indicators', async () => {
+    const statRows = db
+      .prepare(
+        `SELECT s.bot_id, s.indicator, s.samples, s.hits, s.weight, s.enabled, s.updated_ts,
+                b.name AS bot_name
+           FROM indicator_stats s
+           LEFT JOIN bots b ON b.id = s.bot_id
+          ORDER BY s.indicator, s.bot_id`,
+      )
+      .all() as Array<IndicatorStatJoinRow>;
+
+    const historyRows = db
+      .prepare(
+        `SELECT indicator, ts, AVG(weight) AS weight
+           FROM indicator_weight_history
+          GROUP BY indicator, ts
+          ORDER BY indicator, ts`,
+      )
+      .all() as Array<{ indicator: string; ts: number; weight: number }>;
+
+    const byIndicator = new Map<string, IndicatorStatJoinRow[]>();
+    for (const r of statRows) {
+      const list = byIndicator.get(r.indicator);
+      if (list) list.push(r);
+      else byIndicator.set(r.indicator, [r]);
+    }
+    const historyBy = new Map<string, Array<{ ts: number; weight: number }>>();
+    for (const h of historyRows) {
+      const list = historyBy.get(h.indicator);
+      const point = { ts: h.ts, weight: h.weight };
+      if (list) list.push(point);
+      else historyBy.set(h.indicator, [point]);
+    }
+
+    // Registered indicators first (in registry order), then any orphan stats
+    // rows left behind by a renamed/removed indicator — never silently lost.
+    const defs = listIndicatorDefs();
+    const known = new Set(defs.map((d) => d.name));
+    const extra = [...byIndicator.keys()]
+      .filter((name) => !known.has(name))
+      .sort()
+      .map((name) => ({ name, rule: '', scope: 'symbol' as const, registered: false }));
+
+    const indicators = [...defs.map((d) => ({ ...d, registered: true })), ...extra].map((def) => {
+      const rows = byIndicator.get(def.name) ?? [];
+      const samples = rows.reduce((a, r) => a + r.samples, 0);
+      const hits = rows.reduce((a, r) => a + r.hits, 0);
+      // Sample-weighted so a bot with 5 samples cannot drag the fleet weight.
+      const weightNum = rows.reduce((a, r) => a + r.weight * Math.max(r.samples, 1), 0);
+      const weightDen = rows.reduce((a, r) => a + Math.max(r.samples, 1), 0);
+      return {
+        indicator: def.name,
+        rule: def.rule,
+        scope: def.scope,
+        registered: def.registered,
+        samples,
+        hits,
+        hitRate: samples > 0 ? laplaceHitRate(hits, samples) : null,
+        /** Fleet weight: null until any bot has a stats row at all. */
+        weight: weightDen > 0 ? weightNum / weightDen : null,
+        botCount: rows.length,
+        enabledBots: rows.filter((r) => r.enabled === 1).length,
+        updatedTs: rows.reduce<number | null>(
+          (a, r) => (a === null || r.updated_ts > a ? r.updated_ts : a),
+          null,
+        ),
+        bots: rows.map((r) => ({
+          botId: r.bot_id,
+          botName: r.bot_name,
+          samples: r.samples,
+          hits: r.hits,
+          hitRate: r.samples > 0 ? laplaceHitRate(r.hits, r.samples) : null,
+          weight: r.weight,
+          enabled: r.enabled === 1,
+          updatedTs: r.updated_ts,
+        })),
+        history: historyBy.get(def.name) ?? [],
+      };
+    });
+
+    return { sampleFloor: SAMPLE_FLOOR, disableFloor: DISABLE_FLOOR, indicators };
   });
 }

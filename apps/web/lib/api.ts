@@ -177,6 +177,43 @@ export const IndicatorStatSchema = z.object({
 });
 export type IndicatorStat = z.infer<typeof IndicatorStatSchema>;
 
+/** One bot's row inside the global indicator rollup (IMPL-2). */
+export const IndicatorBotStatSchema = z.object({
+  botId: num,
+  botName: z.string().nullable(),
+  samples: num,
+  hits: num,
+  hitRate: nullNum,
+  weight: num,
+  enabled: z.boolean(),
+  updatedTs: num,
+});
+export type IndicatorBotStat = z.infer<typeof IndicatorBotStatSchema>;
+
+export const IndicatorRollupRowSchema = z.object({
+  indicator: z.string(),
+  rule: z.string(),
+  scope: z.enum(['symbol', 'global']),
+  registered: z.boolean(),
+  samples: num,
+  hits: num,
+  hitRate: nullNum,
+  weight: nullNum,
+  botCount: num,
+  enabledBots: num,
+  updatedTs: nullNum,
+  bots: z.array(IndicatorBotStatSchema),
+  history: z.array(z.object({ ts: num, weight: num })),
+});
+export type IndicatorRollupRow = z.infer<typeof IndicatorRollupRowSchema>;
+
+export const IndicatorRollupSchema = z.object({
+  sampleFloor: num,
+  disableFloor: num,
+  indicators: z.array(IndicatorRollupRowSchema),
+});
+export type IndicatorRollup = z.infer<typeof IndicatorRollupSchema>;
+
 export const JournalEntrySchema = z.object({
   id: num,
   ts: num,
@@ -331,6 +368,9 @@ export const api = {
 
   models: () =>
     request(z.object({ models: z.array(ModelStatSchema) }), 'GET', '/api/stats/models').then((r) => r.models),
+
+  /** Fleet-wide indicator track record + the registry that drives the grid columns. */
+  indicatorRollup: () => request(IndicatorRollupSchema, 'GET', '/api/stats/indicators'),
 
   assets: () =>
     request(z.object({ assets: z.array(AssetSchema) }), 'GET', '/api/assets').then((r) => r.assets),

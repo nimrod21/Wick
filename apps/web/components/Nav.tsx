@@ -10,6 +10,7 @@ const LINKS = [
   { href: '/', label: 'DASH' },
   { href: '/bots', label: 'BOTS' },
   { href: '/market', label: 'MARKET' },
+  { href: '/indicators', label: 'INDICATORS' },
   { href: '/settings', label: 'SETTINGS' },
 ];
 

@@ -226,6 +226,38 @@ export function recentVoteRecord(
   return { samples, hits };
 }
 
+/** UTC day bucket — one weight-history row per indicator per day. */
+function dayBucket(ts: number): number {
+  return Math.floor(ts / 86_400_000) * 86_400_000;
+}
+
+/**
+ * Append the post-pass weight of every (bot, indicator) to
+ * `indicator_weight_history` so the UI can draw weight evolution — the stats
+ * table itself only ever holds the current value. Bucketed to the UTC day and
+ * written with INSERT OR REPLACE, so re-running a recompute on the same day
+ * overwrites its own row instead of appending a duplicate.
+ */
+function appendWeightHistory(ts: number, botId?: number): number {
+  const rows = (
+    botId === undefined
+      ? db.prepare('SELECT bot_id, indicator, weight FROM indicator_stats').all()
+      : db.prepare('SELECT bot_id, indicator, weight FROM indicator_stats WHERE bot_id = ?').all(botId)
+  ) as Array<{ bot_id: number; indicator: string; weight: number }>;
+  if (rows.length === 0) return 0;
+
+  const day = dayBucket(ts);
+  const insert = db.prepare(
+    `INSERT OR REPLACE INTO indicator_weight_history (bot_id, indicator, ts, weight)
+     VALUES (?, ?, ?, ?)`,
+  );
+  const tx = db.transaction(() => {
+    for (const r of rows) insert.run(r.bot_id, r.indicator, day, r.weight);
+  });
+  tx();
+  return rows.length;
+}
+
 export interface RecomputeChange {
   botId: number;
   indicator: string;
@@ -311,9 +343,20 @@ export function recomputeWeights(ts: number = nowMs(), botId?: number): Recomput
     });
   }
 
-  if (changes.length > 0) {
+  // History is appended for EVERY indicator, not just the ones that moved —
+  // a flat line while a weight is frozen below the sample floor is exactly
+  // what the Track-record chart has to show.
+  let historyRows = 0;
+  try {
+    historyRows = appendWeightHistory(ts, botId);
+  } catch (err) {
+    // Never let bookkeeping fail the recompute itself.
+    logger.error({ err }, 'indicator stats: weight history append failed');
+  }
+
+  if (changes.length > 0 || historyRows > 0) {
     logger.info(
-      { changes: changes.length, retrialWeek: retrial },
+      { changes: changes.length, historyRows, retrialWeek: retrial },
       'indicator stats: daily recompute applied',
     );
   }

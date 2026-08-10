@@ -53,13 +53,25 @@ export interface IndicatorResult {
 }
 
 /**
+ * `symbol` = the value differs per symbol (the normal case).
+ * `global` = one market-wide reading stored against every symbol (fear_greed).
+ * The UI groups by this instead of naming indicators, so a future global
+ * source (macro, news breadth) only has to declare itself here.
+ */
+export type IndicatorScope = 'symbol' | 'global';
+
+export interface IndicatorDef {
+  rule: string;
+  /** Defaults to 'symbol' when omitted. */
+  scope?: IndicatorScope;
+  compute: (ctx: IndicatorCtx) => IndicatorResult;
+}
+
+/**
  * THE vote-rule table (IMPL-1 §1.3), keyed by indicator name. v1 defaults.
  * Phase 5 `indicator_stats` rows reference these exact names.
  */
-export const INDICATOR_DEFS: Record<
-  string,
-  { rule: string; compute: (ctx: IndicatorCtx) => IndicatorResult }
-> = {
+export const INDICATOR_DEFS: Record<string, IndicatorDef> = {
   rsi14: {
     rule: 'RSI(14): <30 bull · >70 bear · else neutral',
     compute: ({ closes }) => {
@@ -134,6 +146,7 @@ export const INDICATOR_DEFS: Record<
   },
   fear_greed: {
     rule: 'Fear&Greed index: <25 bull · >75 bear · else neutral.',
+    scope: 'global',
     compute: ({ fearGreed }) => {
       if (fearGreed === null) return { value: null, vote: 'neutral' };
       const vote: Vote = fearGreed < 25 ? 'bull' : fearGreed > 75 ? 'bear' : 'neutral';
@@ -143,6 +156,18 @@ export const INDICATOR_DEFS: Record<
 };
 
 export const INDICATOR_NAMES = Object.keys(INDICATOR_DEFS);
+
+/**
+ * The registry as data — what the UI builds its columns from, so a newly
+ * registered indicator shows up without a single edit on the web side.
+ */
+export function listIndicatorDefs(): Array<{ name: string; rule: string; scope: IndicatorScope }> {
+  return Object.entries(INDICATOR_DEFS).map(([name, def]) => ({
+    name,
+    rule: def.rule,
+    scope: def.scope ?? 'symbol',
+  }));
+}
 
 let unsubscribe: (() => void) | null = null;
 let eventIdSeq = 1;

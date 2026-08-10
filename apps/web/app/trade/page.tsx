@@ -106,12 +106,12 @@ export default function TradePage() {
 
       {/* The dashboard's picker, verbatim (compact variant): one watchlist
           component for the whole app, one batched tick subscription. */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      {/* items-stretch + fill chart: watchlist, chart and the ticket/account
+          column share one bottom edge (Luka). The ticket's status line has
+          reserved height, so the tied heights can't jitter. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
         <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} variant="compact" />
-        {/* items-start: columns hug their content — the chart panel must not
-            stretch to the ticket column's height (it grew whenever the ticket
-            showed a hint line, which read as the chart "moving"). */}
-        <div className="grid min-w-0 flex-1 items-start gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <Panel
           title={`${symbol} — ${tf}`}
           right={
@@ -140,7 +140,8 @@ export default function TradePage() {
               </span>
             </span>
           }
-          bodyClassName="p-0"
+          className="flex min-h-0 flex-col"
+          bodyClassName="flex min-h-0 flex-1 flex-col p-0"
         >
           {(candles.data?.length ?? 0) === 0 ? (
             <Empty>no candles for {symbol} {tf}</Empty>
@@ -151,7 +152,7 @@ export default function TradePage() {
               tf={tf}
               markers={markers}
               priceLines={priceLines}
-              height={380}
+              fill
             />
           )}
         </Panel>

@@ -167,7 +167,7 @@ export function WatchlistPanel({
 
   return (
     <Panel
-      className="w-full shrink-0 lg:w-[220px]"
+      className="flex w-full shrink-0 flex-col lg:w-[220px]"
       title="Watchlist"
       right={
         <span className="flex items-center gap-2">
@@ -186,7 +186,7 @@ export function WatchlistPanel({
           )}
         </span>
       }
-      bodyClassName="p-0"
+      bodyClassName="flex min-h-0 flex-1 flex-col p-0"
     >
       <input
         type="search"
@@ -196,9 +196,11 @@ export function WatchlistPanel({
         aria-label="search the watchlist"
         className="w-full border-0 border-b border-line bg-transparent px-2 py-1 text-[11px] uppercase placeholder:text-muted focus:border-cyan focus:outline-none"
       />
+      {/* Fills the panel when the parent row stretches it (lg); the max-h caps
+          only bound the stacked mobile layout, where there is no row height. */}
       <div
-        className={`overflow-y-auto ${
-          variant === 'dock' ? 'max-h-56 lg:max-h-[560px]' : 'max-h-56 lg:max-h-[420px]'
+        className={`overflow-y-auto lg:max-h-none lg:flex-1 ${
+          variant === 'dock' ? 'max-h-56 lg:min-h-[400px]' : 'max-h-56 lg:min-h-[300px]'
         }`}
       >
         {summary.isError && (

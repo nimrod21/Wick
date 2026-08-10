@@ -30,6 +30,9 @@ export default function DashboardPage() {
     <div className="space-y-4">
       <PixelTitle className="text-green">DASHBOARD</PixelTitle>
 
+      {/* Bots front and center — they are the product. */}
+      <BotStrip />
+
       {/* [watchlist | 3-col grid]. Row 1: selected asset · market signals ·
           macro. Row 2: the asset's news (wide — headlines want width) · whale
           log. Grid stretch keeps each row's panel edges flush. */}
@@ -45,8 +48,6 @@ export default function DashboardPage() {
           <WhalesPanel asset={asset} />
         </div>
       </div>
-
-      <BotStrip />
     </div>
   );
 }

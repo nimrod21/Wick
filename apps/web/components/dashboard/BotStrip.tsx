@@ -16,7 +16,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useLive } from '@/lib/sse';
 import { BotCard } from '@/components/dashboard/BotCard';
-import { Empty, PixelTitle } from '@/components/ui';
+import { Empty, Panel, PixelTitle } from '@/components/ui';
 import { pct, usd } from '@/lib/format';
 
 export function BotStrip() {
@@ -40,26 +40,27 @@ export function BotStrip() {
       : null;
 
   return (
-    <div className="flex flex-wrap items-stretch gap-2">
-      {bots.isError && <Empty>bots unavailable — {String((bots.error as Error).message)}</Empty>}
+    <Panel
+      title="bots"
+      right={
+        <Link href="/bots" className="text-[10px] uppercase text-muted hover:text-cyan">
+          manage fleet →
+        </Link>
+      }
+      bodyClassName="p-3"
+    >
+      <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {bots.isError && <Empty>bots unavailable — {String((bots.error as Error).message)}</Empty>}
 
-      {(bots.data ?? []).map((b) => (
-        <BotCard key={b.id} bot={b} small />
-      ))}
+        {(bots.data ?? []).map((b) => (
+          <BotCard key={b.id} bot={b} />
+        ))}
 
-      <Link
-        href="/bots"
-        className="panel flex min-w-[80px] items-center justify-center border-dashed px-3 text-xs uppercase tracking-wider text-muted hover:border-cyan hover:text-cyan"
-        title="manage the fleet — create, start, stop, fund"
-      >
-        +
-      </Link>
-
-      <Link
-        href="/trade"
-        className="panel flex min-w-[170px] items-center gap-3 p-2 hover:border-cyan"
-        title="your own paper account — trade by hand"
-      >
+        <Link
+          href="/trade"
+          className="panel flex items-center gap-3 p-3 hover:border-cyan"
+          title="your own paper account — trade by hand"
+        >
         <span className="inline-block h-2 w-2 bg-cyan" aria-hidden />
         <span className="min-w-0">
           <PixelTitle as="span" className="block text-cyan">
@@ -80,6 +81,15 @@ export function BotStrip() {
           </span>
         </span>
       </Link>
-    </div>
+
+      <Link
+        href="/bots"
+        className="panel flex min-h-[64px] items-center justify-center border-dashed px-3 text-xs uppercase tracking-wider text-muted hover:border-cyan hover:text-cyan"
+        title="manage the fleet — create, start, stop, fund"
+      >
+        + new bot
+      </Link>
+      </div>
+    </Panel>
   );
 }

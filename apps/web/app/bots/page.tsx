@@ -39,7 +39,9 @@ export default function BotsPage() {
       {isLoading && <Empty>loading bots…</Empty>}
       {isError && <Empty>bots unavailable — {String((error as Error).message)}</Empty>}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {/* items-start: an expanded NewBotCard form must not inflate the other
+          cards in its row to the form's height. */}
+      <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
         {(bots ?? []).map((b) => (
           <BotCard key={b.id} bot={b} actions />
         ))}

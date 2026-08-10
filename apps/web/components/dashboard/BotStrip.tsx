@@ -52,10 +52,6 @@ export function BotStrip() {
       <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {bots.isError && <Empty>bots unavailable — {String((bots.error as Error).message)}</Empty>}
 
-        {(bots.data ?? []).map((b) => (
-          <BotCard key={b.id} bot={b} />
-        ))}
-
         <Link
           href="/trade"
           className="panel flex items-center gap-3 p-3 hover:border-cyan"
@@ -81,6 +77,10 @@ export function BotStrip() {
           </span>
         </span>
       </Link>
+
+      {(bots.data ?? []).map((b) => (
+        <BotCard key={b.id} bot={b} />
+      ))}
 
       <Link
         href="/bots"

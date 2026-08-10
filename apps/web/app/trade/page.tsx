@@ -110,7 +110,11 @@ export default function TradePage() {
           column share one bottom edge (Luka). The ticket's status line has
           reserved height, so the tied heights can't jitter. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-        <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} variant="compact" />
+        {/* Relative shell: the panel goes absolute inside it, so the row's
+            height comes from the ticket/account column — never from 50 rows. */}
+        <div className="relative w-full shrink-0 lg:w-[220px]">
+          <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} variant="compact" fillRow />
+        </div>
         <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <Panel
           title={`${symbol} — ${tf}`}

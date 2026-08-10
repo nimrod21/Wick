@@ -124,11 +124,18 @@ export function WatchlistPanel({
   symbol,
   onSelectSymbol,
   variant = 'dock',
+  fillRow = false,
 }: {
   symbol: string;
   onSelectSymbol: (symbol: string) => void;
   /** `dock`: collapsible dashboard column. `compact`: height-capped picker. */
   variant?: 'dock' | 'compact';
+  /**
+   * Fill a sibling-defined row height instead of having one of our own: the
+   * caller wraps us in a `relative` box and we go absolute inside it, so 50
+   * rows can never drive the row's height (they scroll instead).
+   */
+  fillRow?: boolean;
 }) {
   const summary = useQuery({ queryKey: ['market-summary'], queryFn: api.summary, refetchInterval: 60_000 });
   const ticks = useLiveTicks();
@@ -167,7 +174,11 @@ export function WatchlistPanel({
 
   return (
     <Panel
-      className="flex w-full shrink-0 flex-col lg:w-[220px]"
+      className={
+        fillRow
+          ? 'flex w-full flex-col lg:absolute lg:inset-0'
+          : 'flex w-full shrink-0 flex-col lg:w-[220px]'
+      }
       title="Watchlist"
       right={
         <span className="flex items-center gap-2">
@@ -196,11 +207,13 @@ export function WatchlistPanel({
         aria-label="search the watchlist"
         className="w-full border-0 border-b border-line bg-transparent px-2 py-1 text-[11px] uppercase placeholder:text-muted focus:border-cyan focus:outline-none"
       />
-      {/* Fills the panel when the parent row stretches it (lg); the max-h caps
-          only bound the stacked mobile layout, where there is no row height. */}
       <div
-        className={`overflow-y-auto lg:max-h-none lg:flex-1 ${
-          variant === 'dock' ? 'max-h-56 lg:min-h-[400px]' : 'max-h-56 lg:min-h-[300px]'
+        className={`overflow-y-auto ${
+          fillRow
+            ? 'max-h-56 lg:max-h-none lg:min-h-0 lg:flex-1'
+            : variant === 'dock'
+              ? 'max-h-56 lg:max-h-[560px]'
+              : 'max-h-56 lg:max-h-[420px]'
         }`}
       >
         {summary.isError && (

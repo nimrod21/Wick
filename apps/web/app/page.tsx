@@ -3,12 +3,12 @@
 /**
  * DASHBOARD — the glance (IMPL-5, LAYOUT.md), now an ASSET VIEW (IMPL-6C).
  *
- * Chips on top, one big chart in the middle under its asset-context header,
- * and a right column that is ABOUT the selected asset: its indicator votes,
- * its tagged news, whale flow in its context. Picking a chip re-points all of
- * it at once — no navigation, no second page. Market-wide readings (SIGNALS
- * NOW, the macro board) sit in their own row below, and the bot fleet along
- * the bottom.
+ * A watchlist docked on the left, one big chart in the middle under its
+ * asset-context header, and a right column that is ABOUT the selected asset:
+ * its indicator votes, its tagged news, whale flow in its context. Picking a
+ * watchlist row re-points all of it at once — no navigation, no second page.
+ * Market-wide readings (SIGNALS NOW, the macro board) sit in their own row
+ * below, and the bot fleet along the bottom.
  *
  * Nothing deep lives here: every panel is a link into the page that owns that
  * depth (/indicators, /intel, /bots, /trade). The old /market page was this
@@ -20,7 +20,8 @@ import dynamic from 'next/dynamic';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, TIMEFRAMES, type Tf } from '@/lib/api';
 import { useLive } from '@/lib/sse';
-import { ChipStrip, MacroChips } from '@/components/dashboard/ChipStrip';
+import { MacroChips } from '@/components/dashboard/MacroChips';
+import { WatchlistPanel } from '@/components/dashboard/WatchlistPanel';
 import { AssetPanel } from '@/components/dashboard/AssetPanel';
 import { SignalsPanel } from '@/components/dashboard/SignalsPanel';
 import { WhalesPanel } from '@/components/dashboard/WhalesPanel';
@@ -43,14 +44,18 @@ export default function DashboardPage() {
     <div className="space-y-4">
       <PixelTitle className="text-green">DASHBOARD</PixelTitle>
 
-      <ChipStrip symbol={symbol} onSelectSymbol={setSymbol} />
-
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <ChartPane symbol={symbol} />
-        <div className="space-y-4">
-          <AssetPanel symbol={symbol} />
-          <NewsPanel asset={asset} />
-          <WhalesPanel asset={asset} />
+      {/* [watchlist | chart | asset column] on wide screens. Flex, not a
+          3-column grid, so collapsing the watchlist to its rail reflows the
+          row on its own — the page never has to know the rail's width. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} />
+        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
+          <ChartPane symbol={symbol} />
+          <div className="space-y-4">
+            <AssetPanel symbol={symbol} />
+            <NewsPanel asset={asset} />
+            <WhalesPanel asset={asset} />
+          </div>
         </div>
       </div>
 

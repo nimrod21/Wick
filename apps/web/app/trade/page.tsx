@@ -20,12 +20,12 @@ import dynamic from 'next/dynamic';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, fillReason, TIMEFRAMES, type ModelStat, type Tf } from '@/lib/api';
 import { useLive, useLiveTicks } from '@/lib/sse';
-import { favoritesFirst, useFavorites } from '@/lib/prefs';
 import type { TradeMarker } from '@/components/charts/CandleChart';
+import { WatchlistPanel } from '@/components/dashboard/WatchlistPanel';
 import { AccountBox, OrderTicket } from '@/components/trade/OrderTicket';
 import { OpenPositions, TradeHistory } from '@/components/trade/Positions';
 import { Empty, Panel, PixelTitle, Stat } from '@/components/ui';
-import { num, pct, shortSymbol } from '@/lib/format';
+import { num, pct } from '@/lib/format';
 
 const CandleChart = dynamic(() => import('@/components/charts/CandleChart').then((m) => m.CandleChart), {
   ssr: false,
@@ -37,12 +37,10 @@ export default function TradePage() {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [tf, setTf] = useState<Tf>('1h');
   const [ghosts, setGhosts] = useState(true);
-  const [filter, setFilter] = useState('');
-  const [favs, toggleFav] = useFavorites();
   // Batched (see useLiveTicks): a 50-symbol watchlist pushes ~100 ticks/s.
+  // Open positions price off this; the watchlist panel shares the same feed.
   const ticks = useLiveTicks();
 
-  const summary = useQuery({ queryKey: ['market-summary'], queryFn: api.summary, refetchInterval: 60_000 });
   const candles = useQuery({ queryKey: ['candles', symbol, tf], queryFn: () => api.candles(symbol, tf, 400) });
   const account = useQuery({
     queryKey: ['trade-account'],
@@ -111,50 +109,11 @@ export default function TradePage() {
         <YouVsBots models={models.data} />
       </div>
 
-      {/* Same picker contract as the dashboard chip strip: search + starred
-          first, so a 50-symbol watchlist stays one keystroke away. */}
-      <div className="flex items-center gap-2 border border-line p-2">
-        <input
-          type="search"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="filter"
-          aria-label="filter symbols"
-          className="w-20 shrink-0 border border-line bg-transparent px-1.5 py-0.5 text-[11px] uppercase placeholder:text-muted focus:border-cyan focus:outline-none"
-        />
-        <div className="flex flex-1 flex-wrap items-center gap-2">
-          {favoritesFirst(
-            (summary.data?.symbols ?? []).filter((s) =>
-              s.symbol.includes(filter.trim().toUpperCase()),
-            ),
-            favs,
-            (s) => s.symbol,
-          ).map((s) => (
-            <span
-              key={s.symbol}
-              className={`flex items-center gap-1 border px-1.5 py-0.5 text-[11px] ${
-                s.symbol === symbol ? 'border-cyan text-cyan' : 'border-line text-muted'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => toggleFav(s.symbol)}
-                title={favs.has(s.symbol) ? 'unpin' : 'pin to the front'}
-                className={`text-[10px] leading-none ${
-                  favs.has(s.symbol) ? 'text-amber' : 'text-line hover:text-amber'
-                }`}
-              >
-                {favs.has(s.symbol) ? '★' : '☆'}
-              </button>
-              <button type="button" onClick={() => setSymbol(s.symbol)} className="hover:text-fg">
-                {shortSymbol(s.symbol)}
-              </button>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+      {/* The dashboard's picker, verbatim (compact variant): one watchlist
+          component for the whole app, one batched tick subscription. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} variant="compact" />
+        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <Panel
           title={`${symbol} — ${tf}`}
           right={
@@ -206,6 +165,7 @@ export default function TradePage() {
           <Panel title={`Account — ${account.data?.name ?? 'you'}`}>
             <AccountBox account={account.data} />
           </Panel>
+        </div>
         </div>
       </div>
 

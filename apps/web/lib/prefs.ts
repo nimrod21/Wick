@@ -80,6 +80,28 @@ export function useFavorites(): [Set<string>, (symbol: string) => void] {
   return [new Set(favs), toggle];
 }
 
+// ── watchlist rail (IMPL-6D) ───────────────────────────────────────────
+
+const WATCHLIST_COLLAPSED_KEY = 'wick.watchlist.collapsed';
+
+/**
+ * Whether the dashboard watchlist is collapsed to its rail. Starts expanded
+ * so SSR and the first client render agree, then adopts the stored value.
+ */
+export function useWatchlistCollapsed(): [boolean, (on: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    setCollapsed(window.localStorage.getItem(WATCHLIST_COLLAPSED_KEY) === '1');
+  }, []);
+
+  const set = (on: boolean): void => {
+    window.localStorage.setItem(WATCHLIST_COLLAPSED_KEY, on ? '1' : '0');
+    setCollapsed(on);
+  };
+
+  return [collapsed, set];
+}
+
 /** Starred rows first; everything keeps the server's order (sort is stable). */
 export function favoritesFirst<T>(rows: T[], favs: Set<string>, key: (row: T) => string): T[] {
   if (favs.size === 0) return rows;

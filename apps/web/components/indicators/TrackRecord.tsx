@@ -37,16 +37,44 @@ function Collecting({ samples, floor }: { samples: number; floor: number }) {
   );
 }
 
+/**
+ * Adoption (IMPL-7): how many bots currently TRUST this indicator. Next to
+ * hit-rate it is Luka's "which indicators actually have impact" at a glance —
+ * a high hit-rate nobody runs, or a mediocre one the whole fleet keeps, both
+ * say something. A bot that has never scored an indicator still trusts it, so
+ * the denominator is the fleet, not the stats table.
+ */
+function Adoption({ adopted, fleet }: { adopted: number; fleet: number }) {
+  if (fleet === 0) return <span className="text-muted">—</span>;
+  const frac = Math.max(0, Math.min(1, adopted / fleet));
+  const tone = adopted === 0 ? 'bg-red' : frac >= 0.5 ? 'bg-green' : 'bg-amber';
+  return (
+    <span
+      className="inline-flex items-center gap-2"
+      title={`${adopted} of ${fleet} bots currently trust this indicator`}
+    >
+      <span className="inline-block h-1.5 w-12 bg-line" aria-hidden>
+        <span className={`block h-full ${tone}`} style={{ width: `${frac * 100}%` }} />
+      </span>
+      <span className="tnum text-[10px] text-muted">
+        {adopted}/{fleet}
+      </span>
+    </span>
+  );
+}
+
 function IndicatorRowView({
   row,
   floor,
-  disableFloor,
+  fleetSize,
+  minActive,
   open,
   onToggle,
 }: {
   row: IndicatorRollupRow;
   floor: number;
-  disableFloor: number;
+  fleetSize: number;
+  minActive: number;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -77,6 +105,9 @@ function IndicatorRowView({
           {below ? <Collecting samples={row.samples} floor={floor} /> : <HitRate rate={row.hitRate} />}
         </td>
         <td className="px-3 py-1">
+          <Adoption adopted={row.adoption} fleet={fleetSize} />
+        </td>
+        <td className="px-3 py-1">
           {row.weight === null ? <span className="text-muted">—</span> : <WeightBar weight={row.weight} />}
         </td>
         <td className="px-3 py-1">
@@ -99,10 +130,11 @@ function IndicatorRowView({
       </tr>
       {open && (
         <tr className="border-b border-line">
-          <td colSpan={6} className="bg-panel px-3 py-2">
+          <td colSpan={7} className="bg-panel px-3 py-2">
             <p className="mb-2 text-[10px] text-muted">
-              {row.rule || 'no rule registered'} — auto-disabled below 45% hit-rate once {disableFloor}{' '}
-              samples exist; disabled indicators keep voting in shadow.
+              {row.rule || 'no rule registered'} — each bot decides for himself whether to keep this
+              one on; code only holds the frame (at least {minActive} active per bot). A switched-off
+              indicator keeps voting in shadow, so its record keeps building.
             </p>
             {row.bots.length === 0 ? (
               <p className="text-[10px] text-muted">
@@ -185,6 +217,9 @@ export function TrackRecord({
             <th className="px-3 py-1 font-normal">indicator</th>
             <th className="px-3 py-1 font-normal">samples</th>
             <th className="px-3 py-1 font-normal">hit-rate</th>
+            <th className="px-3 py-1 font-normal" title="bots currently trusting it">
+              adoption
+            </th>
             <th className="px-3 py-1 font-normal">weight</th>
             <th className="px-3 py-1 font-normal">weight trend</th>
             <th className="px-3 py-1 font-normal">state</th>
@@ -196,7 +231,8 @@ export function TrackRecord({
               key={row.indicator}
               row={row}
               floor={rollup.sampleFloor}
-              disableFloor={rollup.disableFloor}
+              fleetSize={rollup.fleetSize}
+              minActive={rollup.minActive}
               open={open === row.indicator}
               onToggle={() => setOpen(open === row.indicator ? null : row.indicator)}
             />
@@ -206,6 +242,8 @@ export function TrackRecord({
       <p className="border-t border-line px-3 py-1 text-[10px] text-muted">
         one sample = one indicator vote on a decision whose 4h outcome was scored (neutral votes and
         moves inside the ±0.3% dead band are skipped). Weights move only past the sample floor.
+        Adoption = bots that currently trust it, out of {rollup.fleetSize}; adoption × hit-rate is
+        where the impact is.
       </p>
     </Panel>
   );

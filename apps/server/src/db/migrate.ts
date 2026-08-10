@@ -5,6 +5,7 @@ import { db } from './client.js';
 import { nowMs } from '../util/time.js';
 import { logger } from '../util/logger.js';
 import { INTEL_DEFAULTS } from '../collectors/intel-settings.js';
+import { REVIEW_DEFAULTS } from '../learn/indicator-review.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +74,11 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
   // IMPL-3a intel collectors + their indicator vote thresholds. Shape and
   // defaults live in collectors/intel-settings.ts; this row only seeds them.
   'intel.thresholds': INTEL_DEFAULTS,
+  // IMPL-7 indicator portfolio review. Shape and defaults live in
+  // learn/indicator-review.ts; this row only seeds them. `min_active` is a
+  // FRACTION of the registered indicators (plus a floor), never a count, so
+  // growing INDICATOR_DEFS needs no edit here.
+  'review.config': REVIEW_DEFAULTS,
   'providers.registry': [
     { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', models: ['deepseek/deepseek-chat-v3-0324:free'], rpm: 20, rpd: 50, enabled: true },
     { id: 'groq', baseUrl: 'https://api.groq.com/openai/v1', models: ['llama-3.3-70b-versatile'], rpm: 30, rpd: 1000, enabled: true },

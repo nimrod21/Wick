@@ -129,6 +129,29 @@ export function writeReflection(
   return Number(info.lastInsertRowid);
 }
 
+/**
+ * Reflection for one indicator on/off change (IMPL-7). Same `kind` as a trade
+ * reflection ON PURPOSE: the daily lesson compression reads reflections, so a
+ * bot that switches an indicator off carries the reason into his own standing
+ * lessons instead of forgetting he did it. Vetoed wishes get NO row — nothing
+ * changed, and `bot_indicator_changes` already records the refusal.
+ */
+export function writeIndicatorChangeReflection(
+  botId: number,
+  indicator: string,
+  action: 'on' | 'off',
+  reasoning: string,
+  source: 'bot' | 'user',
+  ts: number = nowMs(),
+): number {
+  const who = source === 'user' ? ' (set by Luka)' : '';
+  const text = `Indicator review: switched ${indicator} ${action.toUpperCase()}${who} — ${reasoning}`;
+  const info = db
+    .prepare("INSERT INTO journal (bot_id, ts, kind, text) VALUES (?, ?, 'reflection', ?)")
+    .run(botId, ts, text.slice(0, 600));
+  return Number(info.lastInsertRowid);
+}
+
 // ── 2. daily lesson compression (one LLM call per bot per day) ─────────
 
 export interface LessonsRow {

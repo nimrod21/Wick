@@ -3,18 +3,24 @@
  *
  * Every 4h `outcome` event replays the decision's snapshot: each indicator's
  * vote is scored hit/miss against the realised direction, per (bot, indicator).
- * A daily cron turns those hit-rates into weights and toggles.
+ * A daily cron turns those hit-rates into weights.
  *
  * SLOW BY DESIGN — the floors below are LOCKED (PLAN §11, IMPL-3 pitfall #3).
  * Do not tune them down to see movement sooner:
  *   - no weight moves at all until samples >= 30
  *   - multiplicative update with alpha 0.1, clamped to [0.25, 2.0]
- *   - auto-disable only at samples >= 100 AND smoothed hit-rate < 0.45
+ *
+ * IMPL-7: this module NO LONGER flips `enabled`. The mechanical auto-disable
+ * (<45% @ >=100 samples) and its 4-weekly re-trial are gone — the bot owns
+ * that call now (learn/indicator-review.ts), and the old thresholds survive
+ * here only as `indicatorAdvisories()`, the advice text his review prompt
+ * reads. The system computes and advises; the bot decides.
  *
  * Disabled indicators are NOT deleted: they stay in `snapshot_json` marked
- * `shadow: true` so their votes keep accumulating, and they are excluded from
- * the prompt. Every 4th week a re-trial window lets a recovered indicator
- * earn its way back in (regimes change).
+ * `shadow: true` so their votes keep accumulating (that is the evidence his
+ * next review argues from) and they are excluded from the decision prompt.
+ * Weights keep moving for them too, so a re-enabled indicator comes back with
+ * a current weight rather than a stale one.
  *
  * Indicator names join 1:1 on `INDICATOR_DEFS` keys — this module never
  * rewrites them (IMPL-3 pitfall #5).
@@ -31,9 +37,9 @@ import { nowMs } from '../util/time.js';
 
 /** No weight moves below this many samples. LOCKED. */
 export const SAMPLE_FLOOR = 30;
-/** Auto-disable is only considered from this many samples. LOCKED. */
+/** An indicator is only worth advising about from this many samples. LOCKED. */
 export const DISABLE_FLOOR = 100;
-/** Auto-disable below this smoothed hit-rate. LOCKED. */
+/** Below this smoothed hit-rate the advisory says "consider dropping". LOCKED. */
 export const DISABLE_HIT_RATE = 0.45;
 /** Multiplicative update rate. LOCKED. */
 export const ALPHA = 0.1;
@@ -43,14 +49,12 @@ export const WEIGHT_MAX = 2.0;
 /** Dead band: a move smaller than this has no direction to be right about. */
 export const DIRECTION_BAND_PCT = 0.3;
 
-/** Re-trial: a disabled indicator may be re-enabled during 1 week in 4. */
-const WEEK_MS = 7 * 86_400_000;
-/** Samples needed inside the recent window before a re-trial can re-enable. */
-export const RETRIAL_MIN_SAMPLES = 30;
-/** Recent smoothed hit-rate a disabled indicator must reach to come back. */
-export const RETRIAL_HIT_RATE = 0.5;
-/** How many recent evaluated decisions the re-trial check replays. */
-const RETRIAL_SCAN = 200;
+/** Samples needed in the recent window before a comeback is worth advising. */
+export const RECOVERY_MIN_SAMPLES = 30;
+/** Recent smoothed hit-rate a disabled indicator must reach to be advised back. */
+export const RECOVERY_HIT_RATE = 0.5;
+/** How many recent evaluated decisions the recent-record check replays. */
+const RECENT_SCAN = 200;
 
 // ── math ───────────────────────────────────────────────────────────────
 
@@ -71,15 +75,6 @@ export function voteHit(vote: string | null | undefined, fwdRetPct: number): boo
   if (vote !== 'bull' && vote !== 'bear') return null;
   if (Math.abs(fwdRetPct) <= DIRECTION_BAND_PCT) return null;
   return vote === 'bull' ? fwdRetPct > 0 : fwdRetPct < 0;
-}
-
-/**
- * Re-trial weeks are a fixed 1-in-4 cadence on the UTC week counter, so the
- * window is derivable from the clock alone — `indicator_stats` keeps exactly
- * the columns PLAN §6 specifies (no disabled-at bookkeeping column).
- */
-export function isRetrialWeek(ts: number = nowMs()): boolean {
-  return Math.floor(ts / WEEK_MS) % 4 === 3;
 }
 
 // ── reads ──────────────────────────────────────────────────────────────
@@ -194,13 +189,13 @@ export function recordOutcomeVotes(
   return added;
 }
 
-// ── daily recompute: weights, auto-disable, re-trial ───────────────────
+// ── daily recompute: weights only (IMPL-7: no toggles here) ────────────
 
-/** Replay recent evaluated decisions for one indicator (re-trial check). */
+/** Replay recent evaluated decisions for one indicator (comeback advisory). */
 export function recentVoteRecord(
   botId: number,
   indicator: string,
-  scan: number = RETRIAL_SCAN,
+  scan: number = RECENT_SCAN,
 ): { samples: number; hits: number } {
   const rows = db
     .prepare(
@@ -261,7 +256,7 @@ function appendWeightHistory(ts: number, botId?: number): number {
 export interface RecomputeChange {
   botId: number;
   indicator: string;
-  kind: 'weight' | 'disabled' | 're-enabled';
+  kind: 'weight';
   from: number;
   to: number;
   hitRate: number;
@@ -269,9 +264,10 @@ export interface RecomputeChange {
 }
 
 /**
- * PLAN §11.2 daily pass. Weight moves ONLY at samples >= 30; auto-disable
- * only at samples >= 100 with hit-rate < 0.45; during a re-trial week a
- * disabled indicator whose RECENT record has recovered comes back.
+ * PLAN §11.2 daily pass, IMPL-7 shape: weights ONLY. Weight moves at
+ * samples >= 30 for every row — disabled (shadow) indicators included, so an
+ * indicator the bot brings back returns with a current weight. Nothing here
+ * touches `enabled`; that is the bot's call (learn/indicator-review.ts).
  */
 export function recomputeWeights(ts: number = nowMs(), botId?: number): RecomputeChange[] {
   const rows = (
@@ -286,48 +282,9 @@ export function recomputeWeights(ts: number = nowMs(), botId?: number): Recomput
   const setWeight = db.prepare(
     'UPDATE indicator_stats SET weight = ?, updated_ts = ? WHERE bot_id = ? AND indicator = ?',
   );
-  const setEnabled = db.prepare(
-    'UPDATE indicator_stats SET enabled = ?, updated_ts = ? WHERE bot_id = ? AND indicator = ?',
-  );
-  const retrial = isRetrialWeek(ts);
 
   for (const row of rows) {
     const hitRate = laplaceHitRate(row.hits, row.samples);
-
-    if (row.enabled === 0) {
-      if (!retrial) continue;
-      const recent = recentVoteRecord(row.bot_id, row.indicator);
-      if (recent.samples < RETRIAL_MIN_SAMPLES) continue;
-      const recentRate = laplaceHitRate(recent.hits, recent.samples);
-      if (recentRate < RETRIAL_HIT_RATE) continue;
-      setEnabled.run(1, ts, row.bot_id, row.indicator);
-      changes.push({
-        botId: row.bot_id,
-        indicator: row.indicator,
-        kind: 're-enabled',
-        from: 0,
-        to: 1,
-        hitRate: recentRate,
-        samples: recent.samples,
-      });
-      continue;
-    }
-
-    // Auto-disable supersedes the weight move for this pass.
-    if (row.samples >= DISABLE_FLOOR && hitRate < DISABLE_HIT_RATE) {
-      setEnabled.run(0, ts, row.bot_id, row.indicator);
-      changes.push({
-        botId: row.bot_id,
-        indicator: row.indicator,
-        kind: 'disabled',
-        from: 1,
-        to: 0,
-        hitRate,
-        samples: row.samples,
-      });
-      continue;
-    }
-
     if (row.samples < SAMPLE_FLOOR) continue; // frozen — the floor is locked
     const next = clamp(row.weight * (1 + ALPHA * (hitRate - 0.5)), WEIGHT_MIN, WEIGHT_MAX);
     if (next === row.weight) continue;
@@ -356,11 +313,73 @@ export function recomputeWeights(ts: number = nowMs(), botId?: number): Recomput
 
   if (changes.length > 0 || historyRows > 0) {
     logger.info(
-      { changes: changes.length, historyRows, retrialWeek: retrial },
+      { changes: changes.length, historyRows },
       'indicator stats: daily recompute applied',
     );
   }
   return changes;
+}
+
+// ── on/off (IMPL-7: written ONLY by the review / Luka, never by a cron) ─
+
+/**
+ * Set one indicator's on/off for one bot. Upserts, because a bot that has
+ * never scored an indicator has no stats row yet and must still be able to
+ * switch it off — a missing row reads as "enabled" everywhere (snapshot.ts),
+ * so the row is what makes an off state exist at all.
+ */
+export function setIndicatorEnabled(
+  botId: number,
+  indicator: string,
+  enabled: boolean,
+  ts: number = nowMs(),
+): void {
+  db.prepare(
+    `INSERT INTO indicator_stats (bot_id, indicator, samples, hits, weight, enabled, updated_ts)
+     VALUES (?, ?, 0, 0, 1.0, ?, ?)
+     ON CONFLICT(bot_id, indicator) DO UPDATE SET enabled = excluded.enabled, updated_ts = excluded.updated_ts`,
+  ).run(botId, indicator, enabled ? 1 : 0, ts);
+}
+
+// ── advisories (what the old mechanical toggle became) ─────────────────
+
+export interface IndicatorAdvisory {
+  indicator: string;
+  text: string;
+}
+
+/**
+ * The advice the bot's portfolio review reads — the exact thresholds that used
+ * to flip `enabled` behind his back, now stated as an opinion he may ignore.
+ *
+ * Registry-agnostic: it walks whatever stats rows exist, so a 15-indicator
+ * install and a 150-indicator one produce the same shape of advice.
+ */
+export function indicatorAdvisories(botId: number, _ts: number = nowMs()): IndicatorAdvisory[] {
+  const out: IndicatorAdvisory[] = [];
+  for (const s of listIndicatorStats(botId)) {
+    if (s.hitRate === null) continue;
+    const pct = (s.hitRate * 100).toFixed(0);
+    if (s.enabled) {
+      if (s.samples >= DISABLE_FLOOR && s.hitRate < DISABLE_HIT_RATE) {
+        out.push({
+          indicator: s.indicator,
+          text: `${s.indicator}: ${pct}% over ${s.samples} samples — below ${(DISABLE_HIT_RATE * 100).toFixed(0)}% on a large sample, consider dropping it.`,
+        });
+      }
+      continue;
+    }
+    // Off: has its RECENT record recovered enough to be worth a comeback?
+    const recent = recentVoteRecord(botId, s.indicator);
+    if (recent.samples < RECOVERY_MIN_SAMPLES) continue;
+    const recentRate = laplaceHitRate(recent.hits, recent.samples);
+    if (recentRate < RECOVERY_HIT_RATE) continue;
+    out.push({
+      indicator: s.indicator,
+      text: `${s.indicator} (currently OFF): ${(recentRate * 100).toFixed(0)}% over its last ${recent.samples} shadow votes — it has recovered, consider bringing it back.`,
+    });
+  }
+  return out;
 }
 
 // ── lifecycle ──────────────────────────────────────────────────────────

@@ -4,11 +4,12 @@ import { useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, TIMEFRAMES, type Tf } from '@/lib/api';
+import { api, TIMEFRAMES, type IndicatorChange, type Tf } from '@/lib/api';
 import { useLive } from '@/lib/sse';
 import { Btn, Empty, Panel, Stat } from '@/components/ui';
 import { BotControls } from '@/components/bot/BotControls';
 import { DecisionLog } from '@/components/bot/DecisionLog';
+import { IndicatorChanges } from '@/components/bot/IndicatorChanges';
 import { IndicatorStats } from '@/components/bot/IndicatorStats';
 import { JournalTab } from '@/components/bot/JournalTab';
 import { TriggerTab } from '@/components/bot/TriggerTab';
@@ -25,8 +26,8 @@ const EquityChart = dynamic(() => import('@/components/charts/EquityChart').then
   loading: () => <div className="h-[200px]" />,
 });
 
-type Tab = 'decisions' | 'indicators' | 'journal' | 'triggers';
-const TABS: Tab[] = ['decisions', 'indicators', 'journal', 'triggers'];
+type Tab = 'decisions' | 'indicators' | 'choices' | 'journal' | 'triggers';
+const TABS: Tab[] = ['decisions', 'indicators', 'choices', 'journal', 'triggers'];
 
 export default function BotPage() {
   const params = useParams<{ id: string }>();
@@ -35,6 +36,8 @@ export default function BotPage() {
   const [tab, setTab] = useState<Tab>('decisions');
   const [symbol, setSymbol] = useState<string | null>(null);
   const [tf, setTf] = useState<Tf>('1h');
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   const bot = useQuery({ queryKey: ['bot', botId], queryFn: () => api.bot(botId), enabled: Number.isFinite(botId) });
   const equity = useQuery({ queryKey: ['bot-equity', botId], queryFn: () => api.equity(botId, 500), enabled: !!bot.data });
@@ -44,6 +47,11 @@ export default function BotPage() {
   const stats = useQuery({ queryKey: ['bot-stats', botId], queryFn: () => api.stats(botId), enabled: !!bot.data });
   const journal = useQuery({ queryKey: ['bot-journal', botId], queryFn: () => api.journal(botId), enabled: !!bot.data });
   const triggers = useQuery({ queryKey: ['bot-triggers', botId], queryFn: () => api.triggers(botId), enabled: !!bot.data });
+  const choices = useQuery({
+    queryKey: ['bot-indicator-changes', botId],
+    queryFn: () => api.indicatorChanges(botId),
+    enabled: !!bot.data,
+  });
 
   const activeSymbol = symbol ?? bot.data?.config.symbols[0] ?? 'BTCUSDT';
   const candles = useQuery({
@@ -80,6 +88,34 @@ export default function BotPage() {
         .slice(0, 8),
     [stats.data],
   );
+
+  /** Newest change per indicator — the "why" behind each current on/off. */
+  const lastChange = useMemo(() => {
+    const map = new Map<string, IndicatorChange>();
+    for (const c of choices.data?.changes ?? []) {
+      if (c.source === 'guard_veto') continue; // a refusal changed nothing
+      if (!map.has(c.indicator)) map.set(c.indicator, c); // list is newest-first
+    }
+    return map;
+  }, [choices.data]);
+
+  /** Luka's hand (IMPL-7 §6): force an indicator on/off, source 'user'. */
+  const toggleIndicator = async (indicator: string, enabled: boolean): Promise<void> => {
+    setToggling(indicator);
+    setToggleError(null);
+    try {
+      await api.setIndicatorEnabled(botId, indicator, enabled);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['bot-stats', botId] }),
+        qc.invalidateQueries({ queryKey: ['bot-indicator-changes', botId] }),
+        qc.invalidateQueries({ queryKey: ['indicator-rollup'] }),
+      ]);
+    } catch (err) {
+      setToggleError((err as Error).message.slice(0, 200));
+    } finally {
+      setToggling(null);
+    }
+  };
 
   /** Protector exits are `trigger_type = 'protector'` with `sl:`/`tp:` detail. */
   const exitReasons = useMemo(() => {
@@ -125,7 +161,9 @@ export default function BotPage() {
     <div className="space-y-4">
       <BotControls bot={b} />
 
-      {/* What this bot currently believes in — the learning loop made visible. */}
+      {/* What this bot currently believes in — the learning loop made visible.
+          Since IMPL-7 the on/off is his choice; clicking a state cell overrides
+          it by hand (source 'user', same log). */}
       <Panel
         title="Trusted indicators"
         right={
@@ -135,7 +173,13 @@ export default function BotPage() {
         }
         bodyClassName="p-0"
       >
-        <IndicatorStats stats={trusted} />
+        {toggleError && <p className="border-b border-line px-3 py-1 text-[10px] text-red">{toggleError}</p>}
+        <IndicatorStats
+          stats={trusted}
+          lastChange={lastChange}
+          onToggle={(indicator, enabled) => void toggleIndicator(indicator, enabled)}
+          busy={toggling}
+        />
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_2fr]">
@@ -244,7 +288,20 @@ export default function BotPage() {
         bodyClassName="p-0"
       >
         {tab === 'decisions' && <DecisionLog decisions={decisions.data ?? []} />}
-        {tab === 'indicators' && <IndicatorStats stats={stats.data ?? []} />}
+        {tab === 'indicators' && (
+          <IndicatorStats
+            stats={stats.data ?? []}
+            lastChange={lastChange}
+            onToggle={(indicator, enabled) => void toggleIndicator(indicator, enabled)}
+            busy={toggling}
+          />
+        )}
+        {tab === 'choices' && (
+          <IndicatorChanges
+            changes={choices.data?.changes ?? []}
+            minActive={choices.data?.minActive ?? 0}
+          />
+        )}
         {tab === 'journal' && (
           <JournalTab entries={journal.data?.entries ?? []} lessons={journal.data?.lessons ?? null} />
         )}

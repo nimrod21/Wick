@@ -24,6 +24,8 @@ import {
 } from '../learn/indicator-stats.js';
 import { listIndicatorDefs } from '../market/indicator-engine.js';
 import { getLessons } from '../learn/journal.js';
+import { minActiveIndicators } from '../learn/indicator-review.js';
+import { listTradingBots } from '../bots/bot-store.js';
 
 const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
 const limitSchema = z.object({ limit: z.coerce.number().int().positive().max(1000).optional() });
@@ -215,6 +217,13 @@ export async function registerStatsRoutes(app: FastifyInstance): Promise<void> {
    * "collecting samples: n/30" progress instead of vanishing from the page.
    */
   app.get('/indicators', async () => {
+    // Adoption (IMPL-7): how many bots currently TRUST this indicator. The
+    // fleet is the denominator — a bot with no stats row for an indicator
+    // trusts it (that is exactly how the snapshot reads a missing row), so
+    // adoption cannot be counted off `indicator_stats` alone.
+    const fleet = listTradingBots();
+    const fleetIds = new Set(fleet.map((b) => b.id));
+
     const statRows = db
       .prepare(
         `SELECT s.bot_id, s.indicator, s.samples, s.hits, s.weight, s.enabled, s.updated_ts,
@@ -264,11 +273,15 @@ export async function registerStatsRoutes(app: FastifyInstance): Promise<void> {
       // Sample-weighted so a bot with 5 samples cannot drag the fleet weight.
       const weightNum = rows.reduce((a, r) => a + r.weight * Math.max(r.samples, 1), 0);
       const weightDen = rows.reduce((a, r) => a + Math.max(r.samples, 1), 0);
+      // Trusted by every fleet bot that has NOT explicitly switched it off.
+      const optedOut = rows.filter((r) => r.enabled === 0 && fleetIds.has(r.bot_id)).length;
       return {
         indicator: def.name,
         rule: def.rule,
         scope: def.scope,
         registered: def.registered,
+        /** Bots currently trusting it, out of `fleetSize` (IMPL-7). */
+        adoption: def.registered ? fleet.length - optedOut : 0,
         samples,
         hits,
         hitRate: samples > 0 ? laplaceHitRate(hits, samples) : null,
@@ -294,6 +307,12 @@ export async function registerStatsRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
-    return { sampleFloor: SAMPLE_FLOOR, disableFloor: DISABLE_FLOOR, indicators };
+    return {
+      sampleFloor: SAMPLE_FLOOR,
+      disableFloor: DISABLE_FLOOR,
+      fleetSize: fleet.length,
+      minActive: minActiveIndicators(),
+      indicators,
+    };
   });
 }

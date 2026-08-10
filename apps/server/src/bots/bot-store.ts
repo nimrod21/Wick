@@ -36,6 +36,11 @@ export interface BotConfig {
   drawdown_kill_pct: number;
   default_sl_pct: number;
   default_tp_pct: number;
+  /**
+   * Days between indicator portfolio reviews (IMPL-7). 0 falls back to the
+   * `review.config` default — the cadence is per bot, the default is data.
+   */
+  review_days: number;
   /** Incremented by reset; stamped into every decision's snapshot_json meta. */
   run: number;
 }
@@ -97,6 +102,7 @@ export function defaultConfig(overrides: Partial<BotConfig> = {}): BotConfig {
     drawdown_kill_pct: g.drawdown_kill_pct ?? DEFAULT_DRAWDOWN_KILL_PCT,
     default_sl_pct: g.default_sl_pct ?? GUARD_DEFAULTS.defaultSlPct,
     default_tp_pct: g.default_tp_pct ?? GUARD_DEFAULTS.defaultTpPct,
+    review_days: 0, // 0 = follow the `review.config` cadence (IMPL-7)
     run: 1,
     ...overrides,
   };
@@ -250,9 +256,11 @@ export function deleteBot(botId: number): 'deleted' | 'not_found' | 'running' {
   if (bot.status === 'running') return 'running';
   db.transaction(() => {
     db.prepare('DELETE FROM outcomes WHERE decision_id IN (SELECT id FROM decisions WHERE bot_id = ?)').run(botId);
-    for (const table of ['decisions', 'fills', 'positions', 'equity_snapshots', 'journal', 'lessons_current', 'indicator_stats', 'trigger_log']) {
+    for (const table of ['decisions', 'fills', 'positions', 'equity_snapshots', 'journal', 'lessons_current', 'indicator_stats', 'bot_indicator_changes', 'trigger_log']) {
       db.prepare(`DELETE FROM ${table} WHERE bot_id = ?`).run(botId);
     }
+    // Last-review bookkeeping lives in `settings` (learn/indicator-review.ts).
+    db.prepare('DELETE FROM settings WHERE key = ?').run(`review.last.${botId}`);
     db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
   })();
   logger.warn({ bot: botId, name: bot.name }, 'bot deleted');

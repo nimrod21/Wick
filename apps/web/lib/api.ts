@@ -62,6 +62,8 @@ export const BotConfigSchema = z.object({
   drawdown_kill_pct: num,
   default_sl_pct: num,
   default_tp_pct: num,
+  /** Days between indicator reviews; 0 = follow the global cadence (IMPL-7). */
+  review_days: num,
   run: num,
 });
 export type BotConfig = z.infer<typeof BotConfigSchema>;
@@ -201,6 +203,8 @@ export const IndicatorRollupRowSchema = z.object({
   rule: z.string(),
   scope: z.enum(['symbol', 'global']),
   registered: z.boolean(),
+  /** Bots currently trusting it, out of `fleetSize` (IMPL-7 adoption). */
+  adoption: num,
   samples: num,
   hits: num,
   hitRate: nullNum,
@@ -216,9 +220,27 @@ export type IndicatorRollupRow = z.infer<typeof IndicatorRollupRowSchema>;
 export const IndicatorRollupSchema = z.object({
   sampleFloor: num,
   disableFloor: num,
+  /** Bots in the fleet — the denominator of the adoption column. */
+  fleetSize: num,
+  /** Guard floor: how few indicators a bot may run at once. */
+  minActive: num,
   indicators: z.array(IndicatorRollupRowSchema),
 });
 export type IndicatorRollup = z.infer<typeof IndicatorRollupSchema>;
+
+/**
+ * One line of the "Indicator choices" timeline (IMPL-7): what the bot asked
+ * for, when, why — including the wishes a code guard refused.
+ */
+export const IndicatorChangeSchema = z.object({
+  id: num,
+  ts: num,
+  indicator: z.string(),
+  action: z.enum(['on', 'off']),
+  reasoning: z.string().nullable(),
+  source: z.enum(['bot', 'user', 'guard_veto']),
+});
+export type IndicatorChange = z.infer<typeof IndicatorChangeSchema>;
 
 export const JournalEntrySchema = z.object({
   id: num,
@@ -460,6 +482,23 @@ export const api = {
       }),
       'GET',
       `/api/bots/${id}/journal${qs({ limit })}`,
+    ),
+
+  /** Indicator on/off timeline for one bot, newest first (IMPL-7). */
+  indicatorChanges: (id: number, limit = 200) =>
+    request(
+      z.object({ minActive: num, changes: z.array(IndicatorChangeSchema) }),
+      'GET',
+      `/api/bots/${id}/indicator-changes${qs({ limit })}`,
+    ),
+
+  /** Luka's hand: force one indicator on/off (409 when a guard refuses). */
+  setIndicatorEnabled: (id: number, indicator: string, enabled: boolean, reason?: string) =>
+    request(
+      z.object({ ok: z.boolean(), indicator: z.string(), action: z.enum(['on', 'off']) }),
+      'POST',
+      `/api/bots/${id}/indicators/${encodeURIComponent(indicator)}`,
+      { enabled, reason },
     ),
 
   triggers: (id: number, limit = 200) =>

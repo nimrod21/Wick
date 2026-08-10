@@ -9,6 +9,8 @@
  *   POST   /api/bots/:id/start|stop|reset
  *   GET    /api/bots/:id/decisions   — newest first (?limit, default 50)
  *   GET    /api/bots/:id/triggers    — trigger_log incl. gated rows (?limit)
+ *   GET    /api/bots/:id/indicator-changes — the on/off timeline incl. vetoes
+ *   POST   /api/bots/:id/indicators/:name  — Luka forces on/off (source 'user')
  *
  * Read-only position/fill/equity routes live in `bots-read.ts` (same prefix).
  *
@@ -37,6 +39,11 @@ import {
   updateBot,
 } from '../bots/bot-store.js';
 import { nextWakeTs } from '../bots/scheduler.js';
+import {
+  applyIndicatorWishes,
+  listIndicatorChanges,
+  minActiveIndicators,
+} from '../learn/indicator-review.js';
 
 /** Bot payload + when the cadence scheduler will next wake it (IMPL-5). */
 function botViewWithWake(bot: BotRow): Record<string, unknown> {
@@ -58,6 +65,16 @@ function fleetBot(id: number): BotRow | undefined {
 const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
 const limitSchema = z.object({ limit: z.coerce.number().int().positive().max(1000).optional() });
 
+/** Indicator names are registry keys — validated against it by the guards. */
+const indicatorParamsSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  name: z.string().min(1).max(60),
+});
+const toggleSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.string().max(300).optional(),
+});
+
 const configSchema = z
   .object({
     cadence_tf: z.enum(['1m', '15m', '1h', '4h', '1d']).optional(),
@@ -73,6 +90,8 @@ const configSchema = z
     drawdown_kill_pct: z.number().min(1).max(100).optional(),
     default_sl_pct: z.number().optional(),
     default_tp_pct: z.number().optional(),
+    /** Days between indicator reviews; 0 = follow `review.config` (IMPL-7). */
+    review_days: z.number().int().min(0).max(365).optional(),
   })
   .strict();
 
@@ -193,5 +212,53 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       .prepare('SELECT * FROM trigger_log WHERE bot_id = ? ORDER BY ts DESC, id DESC LIMIT ?')
       .all(bot.id, query.data.limit ?? 100);
     return { botId: bot.id, triggers };
+  });
+
+  /**
+   * IMPL-7 "Indicator choices": every on/off this bot asked for — applied
+   * (source bot|user) AND refused (source guard_veto), newest first.
+   */
+  app.get('/:id/indicator-changes', async (req, reply) => {
+    const params = paramsSchema.safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
+    const query = limitSchema.safeParse(req.query);
+    if (!query.success) return reply.code(400).send({ error: 'bad query' });
+    const bot = getBot(params.data.id);
+    if (!bot) return reply.code(404).send({ error: 'bot not found' });
+    return {
+      botId: bot.id,
+      minActive: minActiveIndicators(),
+      changes: listIndicatorChanges(bot.id, query.data.limit ?? 100),
+    };
+  });
+
+  /**
+   * Luka's hand (IMPL-7 §6): force one indicator on/off. Same log, same
+   * guards — except the cooldown, which is the bot's own patience, not a rule
+   * about the owner. A guard refusal comes back 409 with the reason AND is
+   * logged as `guard_veto`, exactly like the bot's own refused wish.
+   */
+  app.post('/:id/indicators/:name', async (req, reply) => {
+    const params = indicatorParamsSchema.safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'bad bot id or indicator' });
+    const body = toggleSchema.safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'bad body', issues: body.error.issues });
+    }
+    const bot = fleetBot(params.data.id);
+    if (!bot) return reply.code(404).send({ error: 'bot not found' });
+
+    const action = body.data.enabled ? 'on' : 'off';
+    const [outcome] = applyIndicatorWishes(
+      bot.id,
+      [{ indicator: params.data.name, action }],
+      body.data.reason?.trim() || 'Set by hand from the bot page.',
+      { source: 'user' },
+    );
+    if (!outcome) return reply.code(500).send({ error: 'no outcome' });
+    if (!outcome.applied) {
+      return reply.code(409).send({ error: 'refused by guard', veto: outcome.veto });
+    }
+    return { ok: true, indicator: outcome.indicator, action: outcome.action };
   });
 }

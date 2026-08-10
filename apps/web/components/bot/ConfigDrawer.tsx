@@ -24,6 +24,7 @@ const ConfigFormSchema = z.object({
   drawdown_kill_pct: z.number().min(1).max(100),
   default_sl_pct: z.number().min(-15).max(-1),
   default_tp_pct: z.number().min(2).max(50),
+  review_days: z.number().int().min(0).max(365),
 });
 export type ConfigForm = z.infer<typeof ConfigFormSchema>;
 
@@ -36,6 +37,9 @@ const NUMERIC_FIELDS: Array<{ key: keyof ConfigForm; label: string; step?: strin
   { key: 'drawdown_kill_pct', label: 'drawdown kill %' },
   { key: 'default_sl_pct', label: 'default SL %', step: '0.5' },
   { key: 'default_tp_pct', label: 'default TP %', step: '0.5' },
+  // IMPL-7: days between his indicator portfolio reviews. 0 = follow the
+  // global `review.config` cadence (weekly).
+  { key: 'review_days', label: 'review every (days, 0=default)' },
 ];
 
 export function ConfigDrawer({
@@ -60,6 +64,7 @@ export function ConfigDrawer({
     drawdown_kill_pct: String(bot.config.drawdown_kill_pct),
     default_sl_pct: String(bot.config.default_sl_pct),
     default_tp_pct: String(bot.config.default_tp_pct),
+    review_days: String(bot.config.review_days),
   });
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -81,6 +86,7 @@ export function ConfigDrawer({
       drawdown_kill_pct: Number(form.drawdown_kill_pct),
       default_sl_pct: Number(form.default_sl_pct),
       default_tp_pct: Number(form.default_tp_pct),
+      review_days: Number(form.review_days),
     };
     const parsed = ConfigFormSchema.safeParse(candidate);
     if (!parsed.success) {

@@ -213,6 +213,134 @@ function renderUser(s: Snapshot, candles: SnapshotCandle[]): string {
   return lines.join('\n');
 }
 
+// ── indicator portfolio review (IMPL-7) — a SEPARATE prompt ─────────────
+//
+// Nothing above this line changes for it: the decision prompt is untouched,
+// this is its own call with its own contract. It is rendered from whatever
+// rows the caller passes, so a registry of 15 and a registry of 150 both
+// work with zero edits here (IMPL-7 "LEAVE IT OPEN").
+
+export interface ReviewIndicatorRow {
+  name: string;
+  enabled: boolean;
+  samples: number;
+  hits: number;
+  /** Laplace-smoothed; null until the indicator has any sample at all. */
+  hitRate: number | null;
+  weight: number;
+  /** Registry vote rule, so he can judge an indicator he has never scored. */
+  rule: string;
+}
+
+export interface ReviewGuards {
+  minActive: number;
+  maxChanges: number;
+  cooldownDays: number;
+  activeNow: number;
+  registered: number;
+  /** Scored votes below which a hit-rate is noise (learn/indicator-stats). */
+  sampleFloor: number;
+}
+
+export interface ReviewInput {
+  botName: string;
+  personality: string;
+  /** EVERY registered indicator, on and off alike (off ones carry shadow stats). */
+  indicators: ReviewIndicatorRow[];
+  lessons: string[];
+  /** System advice — the old auto-disable thresholds, as opinions. */
+  advisories: string[];
+  pnl: {
+    equity: number;
+    bankrollStart: number;
+    pnlPct: number;
+    drawdownPct: number;
+    trades: number;
+    meanScore4h: number | null;
+    windowDays: number;
+  };
+  guards: ReviewGuards;
+  /** Prior changes ("you switched X off 3 weeks ago"), newest first. */
+  recentChanges: string[];
+}
+
+export function buildReviewSystem(input: ReviewInput): string {
+  const g = input.guards;
+  return [
+    `You are "${input.botName}", an autonomous crypto paper-trading bot. Personality: ${input.personality}`,
+    ``,
+    `This is not a trade. This is your periodic INDICATOR PORTFOLIO REVIEW: you decide which indicators you still want to see when you trade. Indicators you switch off keep voting in the background, so their record keeps building and you can bring them back later.`,
+    ``,
+    `HOW TO THINK ABOUT IT:`,
+    `- Judge an indicator on ITS OWN record for YOU, not on reputation. Hit-rate under ~50% on a large sample is evidence against it.`,
+    `- A small sample proves nothing. Below ${g.sampleFloor} scored votes, leave it alone and let it collect.`,
+    `- Fewer, better indicators beat a wall of noise — but do not gut your own inputs to look decisive. Changing NOTHING is a valid, common answer.`,
+    ``,
+    `THE FRAME (enforced in code — wishes outside it are logged and refused, not silently trimmed):`,
+    `- You must keep at least ${g.minActive} indicators active. You have ${g.activeNow} active of ${g.registered} registered.`,
+    `- At most ${g.maxChanges} changes per review.`,
+    `- An indicator you changed within the last ${g.cooldownDays} days cannot be flipped again yet.`,
+    `- Only the exact indicator names listed below exist.`,
+    ``,
+    `OUTPUT: reply with ONLY one JSON object, no prose, no markdown fences, exactly this shape:`,
+    `{"enable":[string],"disable":[string],"reasoning":string}`,
+    `- enable/disable: arrays of indicator names, possibly empty. Never list the same name in both.`,
+    `- reasoning: <= 500 chars, naming the evidence you acted on.`,
+  ].join('\n');
+}
+
+function reviewUser(input: ReviewInput): string {
+  const lines: string[] = [];
+  const p = input.pnl;
+
+  lines.push(`Your indicators (n = scored votes, w = learned trust 0.25-2.0):`);
+  for (const ind of input.indicators) {
+    const hit = ind.hitRate === null ? 'n/a' : `${fmtNum(ind.hitRate * 100, 0)}%`;
+    lines.push(
+      `- ${ind.name} [${ind.enabled ? 'ON' : 'OFF'}] hit-rate ${hit} (n ${ind.samples}, w ${fmtNum(ind.weight, 2)}) — ${ind.rule}`,
+    );
+  }
+  lines.push('');
+
+  lines.push('System advisories (advice, not orders — you may disagree):');
+  if (input.advisories.length === 0) lines.push('- nothing stands out right now');
+  else for (const a of input.advisories) lines.push(`- ${a}`);
+  lines.push('');
+
+  lines.push(`Your P&L (last ${p.windowDays} days):`);
+  lines.push(
+    `- equity $${fmtNum(p.equity, 2)} vs bankroll $${fmtNum(p.bankrollStart, 2)} (${fmtNum(p.pnlPct, 2)}%), drawdown ${fmtNum(p.drawdownPct, 1)}% from high-water mark.`,
+  );
+  lines.push(
+    `- ${p.trades} trade${p.trades === 1 ? '' : 's'} executed; mean 4h decision score ${p.meanScore4h === null ? 'n/a (nothing evaluated yet)' : fmtNum(p.meanScore4h, 2)} in [-1,1].`,
+  );
+  lines.push('');
+
+  lines.push('Your standing lessons:');
+  if (input.lessons.length === 0) lines.push('- none yet');
+  else for (const l of input.lessons.slice(0, 10)) lines.push(`- ${l}`);
+  lines.push('');
+
+  lines.push('Your recent indicator changes:');
+  if (input.recentChanges.length === 0) lines.push('- none yet — this is your first review');
+  else for (const c of input.recentChanges) lines.push(`- ${c}`);
+  lines.push('');
+
+  lines.push('Review your indicator set now. JSON only.');
+  return lines.join('\n');
+}
+
+/**
+ * Build the review prompt. PURE — same input, same output. No candle block to
+ * trim: the stats table is the payload, and it is one short line per
+ * registered indicator, so it scales with the registry instead of a constant.
+ */
+export function buildReviewPrompt(input: ReviewInput): RenderedPrompt {
+  const system = buildReviewSystem(input);
+  const user = reviewUser(input);
+  return { system, user, estTokens: estimateTokens(system) + estimateTokens(user) };
+}
+
 /**
  * Build the full prompt. If over PROMPT_TOKEN_TARGET, drop the oldest
  * candles (4 at a time, down to MIN_CANDLES) until it fits.

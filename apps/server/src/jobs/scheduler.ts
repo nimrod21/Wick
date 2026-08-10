@@ -6,6 +6,9 @@
  *     cron: 5-min RSS, 5-min BTC whale sweep, 10-min Yahoo macro)
  *   - 5-min higher-timeframe REST refresh (15m/4h/1d — see STATUS.md)
  *   - hourly candle-gap self-heal (detect missing candles, REST backfill)
+ *   - indicator portfolio reviews (IMPL-7): a daily tick that only calls the
+ *     bots whose own cadence is due — weekly by default, so the steady-state
+ *     cost is ONE extra LLM call per bot per week, staggered over 30 minutes
  *
  * Every intel collector tolerates network failure silently and keeps
  * serving its last-known-good value, so a dead upstream degrades the
@@ -24,8 +27,15 @@ import { startMacro, stopMacro } from '../collectors/macro/yahoo-macro.js';
 import { startRssNews, stopRssNews } from '../collectors/news/rss.js';
 import { startBtcWhales, stopBtcWhales } from '../collectors/onchain/btc-whales.js';
 import { refreshOpenRouterModels } from '../llm/model-discovery.js';
+import { listRunningBots } from '../bots/bot-store.js';
+import {
+  isReviewDue,
+  reviewIndicators,
+  reviewStaggerMs,
+} from '../learn/indicator-review.js';
 
 const tasks: ScheduledTask[] = [];
+const reviewTimers = new Set<NodeJS.Timeout>();
 let running = false;
 
 function safeRun(name: string, fn: () => Promise<void>): void {
@@ -65,6 +75,27 @@ export function startScheduler(): void {
     await refreshOpenRouterModels();
   });
 
+  // Indicator portfolio review (IMPL-7): daily at 00:40 UTC — after the
+  // 00:05 weight recompute and the 00:20 lesson pass, so the stats and
+  // lessons a bot reviews are today's. The tick is daily but `isReviewDue`
+  // gates per bot (weekly by default, plus the optional drawdown trigger),
+  // and each due bot is offset deterministically inside a 30-min window.
+  tasks.push(
+    cron.schedule('40 0 * * *', () => {
+      for (const bot of listRunningBots()) {
+        if (!isReviewDue(bot)) continue;
+        const timer = setTimeout(() => {
+          reviewTimers.delete(timer);
+          void reviewIndicators(bot.id).catch((err: unknown) => {
+            logger.error({ err, bot: bot.id }, 'indicator review cron failed');
+          });
+        }, reviewStaggerMs(bot.id));
+        timer.unref();
+        reviewTimers.add(timer);
+      }
+    }),
+  );
+
   // Macro collectors (self-driving, own cron inside). Lifecycle hitched to
   // the scheduler so start/stop stays unified.
   try {
@@ -91,6 +122,8 @@ export function stopScheduler(): void {
     }
   }
   tasks.length = 0;
+  for (const t of reviewTimers) clearTimeout(t);
+  reviewTimers.clear();
   try {
     stopFearGreed();
     stopFundingOi();

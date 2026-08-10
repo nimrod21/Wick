@@ -42,14 +42,25 @@ import {
 import {
   DISABLE_FLOOR,
   SAMPLE_FLOOR,
+  indicatorAdvisories,
   laplaceHitRate,
   listIndicatorStats,
   recomputeWeights,
   recordOutcomeVotes,
+  setIndicatorEnabled,
   startIndicatorStats,
   stopIndicatorStats,
   voteHit,
 } from '../apps/server/src/learn/indicator-stats.js';
+import {
+  REVIEW_DEFAULTS,
+  applyIndicatorWishes,
+  getReviewConfig,
+  isReviewDue,
+  minActiveIndicators,
+  reviewIndicators,
+} from '../apps/server/src/learn/indicator-review.js';
+import { INDICATOR_NAMES } from '../apps/server/src/market/indicator-engine.js';
 import {
   compressLessons,
   getLessons,
@@ -97,11 +108,13 @@ function writeSetting(key: string, value: string): void {
 const SAVED = {
   registry: readSetting('providers.registry'),
   thresholds: readSetting('triggers.thresholds'),
+  review: readSetting('review.config'),
 };
 
 function restoreSettings(): void {
   if (SAVED.registry !== null) writeSetting('providers.registry', SAVED.registry);
   if (SAVED.thresholds !== null) writeSetting('triggers.thresholds', SAVED.thresholds);
+  if (SAVED.review !== null) writeSetting('review.config', SAVED.review);
 }
 
 function useStubRegistry(): void {
@@ -252,6 +265,8 @@ function purge(): void {
       db.prepare('DELETE FROM equity_snapshots WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM trigger_log WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM indicator_stats WHERE bot_id = ?').run(id);
+      db.prepare('DELETE FROM bot_indicator_changes WHERE bot_id = ?').run(id);
+      db.prepare('DELETE FROM settings WHERE key = ?').run(`review.last.${id}`);
       db.prepare('DELETE FROM journal WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM lessons_current WHERE bot_id = ?').run(id);
       db.prepare('DELETE FROM bots WHERE id = ?').run(id);
@@ -472,8 +487,9 @@ async function main(): Promise<void> {
     );
   });
 
-  // ── 6. auto-disable + shadow ─────────────────────────────────────────
-  await test(`auto-disable at ${DISABLE_FLOOR} samples / 40% → gone from the prompt, votes still recorded`, () => {
+  // ── 6. IMPL-7: no mechanical toggle; an OFF indicator is shadow ───────
+  await test(`the daily recompute NEVER flips enabled (IMPL-7: the bot owns on/off)`, () => {
+    // Exactly the old auto-disable trigger: 100 samples at a 40% hit-rate.
     db.prepare(
       `INSERT INTO indicator_stats (bot_id, indicator, samples, hits, weight, enabled, updated_ts)
        VALUES (?, 'funding', ?, 40, 1.0, 1, ?)
@@ -481,10 +497,22 @@ async function main(): Promise<void> {
     ).run(statsBot.id, DISABLE_FLOOR, Date.now());
 
     const changes = recomputeWeights(Date.now(), statsBot.id);
-    const disabled = changes.find((c) => c.indicator === 'funding' && c.kind === 'disabled');
-    assert.ok(disabled, 'funding should have been auto-disabled');
-    assert.ok(disabled!.hitRate < 0.45, `hit-rate ${disabled!.hitRate} should be < 0.45`);
+    assert.ok(
+      changes.every((c) => c.kind === 'weight'),
+      'the recompute may only move weights now',
+    );
+    const still = listIndicatorStats(statsBot.id).find((s) => s.indicator === 'funding')!;
+    assert.equal(still.enabled, true, 'a 40% hit-rate must NOT auto-disable anything any more');
 
+    // …but the advisory that replaced it says exactly what the old rule did.
+    const advice = indicatorAdvisories(statsBot.id).find((a) => a.indicator === 'funding');
+    assert.ok(advice, 'funding should have produced a "consider dropping" advisory');
+    assert.match(advice!.text, /consider dropping/);
+    console.log(`        n=${DISABLE_FLOOR} @40% → still enabled; advisory: "${advice!.text.slice(0, 72)}…"`);
+  });
+
+  await test('an OFF indicator is gone from the prompt but keeps recording votes', () => {
+    setIndicatorEnabled(statsBot.id, 'funding', false);
     const bot = db.prepare('SELECT * FROM bots WHERE id = ?').get(statsBot.id) as BotRow;
     const snap = buildBotSnapshot(bot, parseConfig(bot), SYMBOLS.up, 'Woken by: test.');
     const shadowed = snap.indicators.find((i) => i.name === 'funding');
@@ -516,7 +544,7 @@ async function main(): Promise<void> {
     assert.equal(after.samples, before + 1, 'shadow votes must still be recorded');
     assert.equal(after.enabled, false, 'recording a shadow vote must not re-enable it');
     console.log(
-      `        funding disabled at n=${DISABLE_FLOOR} hit-rate ${(disabled!.hitRate * 100).toFixed(1)}% → absent from prompt, samples ${before}→${after.samples}`,
+      `        funding OFF → absent from prompt, shadow samples ${before}→${after.samples}`,
     );
   });
 
@@ -689,6 +717,235 @@ async function main(): Promise<void> {
     } finally {
       await app.close();
     }
+  });
+
+  // ── 10. IMPL-7: bot indicator agency ─────────────────────────────────
+  const reviewBot = newBot('review', [SYMBOLS.up]);
+  const REGISTERED = INDICATOR_NAMES.length;
+
+  function changeRows(botId: number): Array<{ indicator: string; action: string; source: string; reasoning: string }> {
+    return db
+      .prepare('SELECT indicator, action, source, reasoning FROM bot_indicator_changes WHERE bot_id = ? ORDER BY id')
+      .all(botId) as Array<{ indicator: string; action: string; source: string; reasoning: string }>;
+  }
+
+  function stubCallCount(): number {
+    const row = db
+      .prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM llm_usage WHERE provider = ?')
+      .get(STUB_ID) as { n: number };
+    return row.n;
+  }
+
+  function scriptReview(reply: Record<string, unknown>): void {
+    setStubScript(STUB_ID, [{ kind: 'custom', result: { ok: true, text: JSON.stringify(reply), status: 200 } }]);
+  }
+
+  await test('review: one LLM call applies his choices, logs them, journals them', async () => {
+    // funding starts OFF so his "enable" wish has something to turn back on.
+    setIndicatorEnabled(reviewBot.id, 'funding', false);
+    const callsBefore = stubCallCount();
+
+    scriptReview({
+      enable: ['funding'],
+      disable: ['rsi14', 'macd', 'not_a_real_indicator'],
+      reasoning: 'rsi14 and macd have been wrong for me; funding has recovered.',
+    });
+    const res = await reviewIndicators(reviewBot.id);
+    assert.ok(res.ok, `review failed: ${res.ok ? '' : res.reason}`);
+
+    assert.equal(stubCallCount() - callsBefore, 1, 'a review must cost EXACTLY one LLM call');
+
+    const stats = new Map(listIndicatorStats(reviewBot.id).map((s) => [s.indicator, s]));
+    assert.equal(stats.get('funding')?.enabled, true, 'funding should be back ON');
+    assert.equal(stats.get('rsi14')?.enabled, false, 'rsi14 should be OFF');
+    assert.equal(stats.get('macd')?.enabled, false, 'macd should be OFF');
+
+    const rows = changeRows(reviewBot.id);
+    const applied = rows.filter((r) => r.source === 'bot');
+    assert.equal(applied.length, 3, `expected 3 applied changes, got ${applied.length}`);
+    assert.ok(applied.every((r) => r.reasoning.includes('funding has recovered')), 'his reason must be logged');
+    const veto = rows.find((r) => r.source === 'guard_veto');
+    assert.ok(veto, 'the unknown indicator must be logged as a guard_veto, never silently dropped');
+    assert.equal(veto!.indicator, 'not_a_real_indicator');
+    assert.match(veto!.reasoning, /guard:unknown_indicator/);
+
+    const reflections = db
+      .prepare("SELECT text FROM journal WHERE bot_id = ? AND kind = 'reflection'")
+      .all(reviewBot.id) as Array<{ text: string }>;
+    assert.equal(reflections.length, 3, 'one journal reflection per APPLIED change (vetoes get none)');
+    assert.match(reflections[0]!.text, /^Indicator review: switched /);
+    console.log(
+      `        1 call → 3 applied + 1 guard_veto, 3 reflections; "${res.ok ? res.reasoning.slice(0, 48) : ''}…"`,
+    );
+  });
+
+  await test('review: the next decision prompt reflects the new set (snapshot proves it)', () => {
+    const bot = db.prepare('SELECT * FROM bots WHERE id = ?').get(reviewBot.id) as BotRow;
+    const snap = buildBotSnapshot(bot, parseConfig(bot), SYMBOLS.up, 'Woken by: test.');
+    const rsi = snap.indicators.find((i) => i.name === 'rsi14');
+    assert.ok(rsi, 'a switched-off indicator must STAY in snapshot_json (shadow votes)');
+    assert.equal(rsi!.shadow, true, 'rsi14 must be marked shadow after he switched it off');
+    assert.equal(snap.indicators.find((i) => i.name === 'funding')?.shadow, false, 'funding is back on');
+
+    const prompt = buildPrompt(
+      { name: bot.name, personality: 'test', minConfidence: 65, feePctPerSide: 0.1, slippagePct: 0.05 },
+      snap,
+    );
+    const block = prompt.user.split('Indicators (')[1]!.split('\n\n')[0]!;
+    assert.ok(!block.includes('- rsi14:'), 'rsi14 must be gone from his next prompt');
+    assert.ok(!block.includes('- macd:'), 'macd must be gone from his next prompt');
+    assert.ok(block.includes('- ema_trend:'), 'indicators he kept must still be there');
+    console.log(`        snapshot: rsi14 shadow ✓, funding live ✓ — prompt drops both switched-off reads`);
+  });
+
+  await test('guards: max 3 changes per review, 7d cooldown, both vetoed AND logged', async () => {
+    const before = changeRows(reviewBot.id).length;
+    scriptReview({
+      enable: ['rsi14'],
+      disable: ['ema_trend', 'bollinger', 'atr14', 'volume_ratio'],
+      reasoning: 'second thoughts, all at once.',
+    });
+    const res = await reviewIndicators(reviewBot.id);
+    assert.ok(res.ok, 'second review should have run');
+
+    const outcomes = res.ok ? res.outcomes : [];
+    const vetoOf = (name: string): string | undefined => outcomes.find((o) => o.indicator === name)?.veto;
+    assert.equal(vetoOf('rsi14'), 'cooldown', 'he flipped rsi14 minutes ago — cooldown must hold');
+    assert.equal(vetoOf('volume_ratio'), 'max_changes', 'the 4th change must be refused');
+    assert.equal(outcomes.filter((o) => o.applied).length, 3, 'exactly 3 changes may land');
+
+    const rows = changeRows(reviewBot.id).slice(before);
+    assert.equal(rows.filter((r) => r.source === 'guard_veto').length, 2, 'both refusals must be logged');
+    assert.ok(
+      rows.some((r) => r.reasoning.includes('guard:cooldown')) &&
+        rows.some((r) => r.reasoning.includes('guard:max_changes')),
+      'the veto rows must name the guard that refused',
+    );
+    assert.equal(
+      listIndicatorStats(reviewBot.id).find((s) => s.indicator === 'rsi14')!.enabled,
+      false,
+      'a vetoed wish must not change the set',
+    );
+    console.log(`        3 applied, cooldown + max_changes vetoed and logged`);
+  });
+
+  await test(`guards: min active is a PROPORTION of the registry (max(floor, ceil(${REGISTERED}/3)))`, async () => {
+    const cfg = getReviewConfig();
+    assert.equal(
+      minActiveIndicators(cfg),
+      Math.max(cfg.min_active_floor, Math.ceil(REGISTERED * cfg.min_active_fraction)),
+      'min active must be derived, never a constant',
+    );
+
+    // Raise the floor to just under the current active count so ONE more
+    // disable trips it — the same test works at any registry size.
+    const active = listIndicatorStats(reviewBot.id).filter((s) => !s.enabled).length;
+    writeSetting('review.config', JSON.stringify({ min_active_floor: REGISTERED - active }));
+    scriptReview({ enable: [], disable: ['whale_flow'], reasoning: 'one too many.' });
+    const res = await reviewIndicators(reviewBot.id);
+    assert.ok(res.ok);
+    assert.equal(res.ok && res.outcomes[0]?.veto, 'min_active', 'the floor must refuse the last disable');
+    assert.ok(
+      changeRows(reviewBot.id).some((r) => r.reasoning.includes('guard:min_active')),
+      'the min-active refusal must be logged too',
+    );
+    writeSetting('review.config', JSON.stringify(REVIEW_DEFAULTS));
+    console.log(`        min active = ${minActiveIndicators()} of ${REGISTERED} registered (config-driven)`);
+  });
+
+  await test("Luka's hand: manual on/off applies, skips the cooldown, logs as source 'user'", async () => {
+    // rsi14 is still inside its cooldown from the first review.
+    const [outcome] = applyIndicatorWishes(
+      reviewBot.id,
+      [{ indicator: 'rsi14', action: 'on' }],
+      'I want it back.',
+      { source: 'user' },
+    );
+    assert.ok(outcome?.applied, 'a user override must not be blocked by the bot cooldown');
+    assert.equal(
+      listIndicatorStats(reviewBot.id).find((s) => s.indicator === 'rsi14')!.enabled,
+      true,
+    );
+    const last = changeRows(reviewBot.id).at(-1)!;
+    assert.equal(last.source, 'user');
+    assert.equal(last.reasoning, 'I want it back.');
+
+    // …and the route the bot page calls does the same thing.
+    const app = await buildServer();
+    try {
+      const off = await app.inject({
+        method: 'POST',
+        url: `/api/bots/${reviewBot.id}/indicators/rsi14`,
+        payload: { enabled: false, reason: 'from the UI' },
+      });
+      assert.equal(off.statusCode, 200, off.payload);
+      assert.equal(
+        listIndicatorStats(reviewBot.id).find((s) => s.indicator === 'rsi14')!.enabled,
+        false,
+      );
+      const bad = await app.inject({
+        method: 'POST',
+        url: `/api/bots/${reviewBot.id}/indicators/nope`,
+        payload: { enabled: false },
+      });
+      assert.equal(bad.statusCode, 409, 'an unknown indicator must be refused, not invented');
+
+      const timeline = await app.inject({ method: 'GET', url: `/api/bots/${reviewBot.id}/indicator-changes` });
+      assert.equal(timeline.statusCode, 200);
+      const body = JSON.parse(timeline.payload) as {
+        minActive: number;
+        changes: Array<{ source: string; indicator: string }>;
+      };
+      assert.ok(body.minActive >= 5, 'the timeline must carry the guard floor');
+      assert.ok(body.changes.some((c) => c.source === 'guard_veto'), 'vetoes belong in the timeline');
+      assert.ok(body.changes.some((c) => c.source === 'user'), 'user overrides belong in the timeline');
+      console.log(`        ${body.changes.length} timeline rows (bot + user + guard_veto)`);
+    } finally {
+      await app.close();
+    }
+  });
+
+  await test('adoption: /api/stats/indicators counts the bots that still trust each read', async () => {
+    const app = await buildServer();
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/stats/indicators' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload) as {
+        fleetSize: number;
+        minActive: number;
+        indicators: Array<{ indicator: string; adoption: number }>;
+      };
+      assert.ok(body.fleetSize >= 1, 'fleet size missing');
+      const byName = new Map(body.indicators.map((i) => [i.indicator, i.adoption]));
+      const droppedByOne = listIndicatorStats(reviewBot.id).filter((s) => !s.enabled).map((s) => s.indicator);
+      assert.ok(droppedByOne.length > 0, 'the review bot should have something switched off');
+      for (const name of droppedByOne) {
+        assert.ok(
+          (byName.get(name) ?? 0) < body.fleetSize,
+          `${name} is off for one bot — adoption must be below the fleet size`,
+        );
+      }
+      // …and an untouched indicator is still trusted by everybody (no stats
+      // row = trusted, which is exactly how the snapshot reads it).
+      assert.equal(byName.get('news_burst'), body.fleetSize, 'an untouched indicator keeps full adoption');
+      console.log(
+        `        fleet ${body.fleetSize}; ${droppedByOne.length} indicator(s) below full adoption, min active ${body.minActive}`,
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  await test('cadence: a fresh bot is due, a just-reviewed bot is not', () => {
+    const fresh = newBot('cadence', [SYMBOLS.up]);
+    assert.equal(isReviewDue(fresh, Date.now()), true, 'a bot that never reviewed is due');
+    const reviewed = db.prepare('SELECT * FROM bots WHERE id = ?').get(reviewBot.id) as BotRow;
+    assert.equal(isReviewDue(reviewed, Date.now()), false, 'he just reviewed — not due again');
+    assert.equal(
+      isReviewDue(reviewed, Date.now() + 8 * 86_400_000),
+      true,
+      'a week later he is due again',
+    );
   });
 
   // ── cleanup ──────────────────────────────────────────────────────────

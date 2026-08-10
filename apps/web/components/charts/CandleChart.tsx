@@ -93,6 +93,7 @@ export function CandleChart({
   markers = NO_MARKERS,
   priceLines = NO_LINES,
   height = 320,
+  fill = false,
 }: {
   candles: Candle[];
   /** Series identity — also switches on live SSE updates for this pair. */
@@ -101,6 +102,8 @@ export function CandleChart({
   markers?: TradeMarker[];
   priceLines?: PriceLineSpec[];
   height?: number;
+  /** Fill the parent's height (parent must size itself, e.g. flex-1 min-h-0). */
+  fill?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -123,11 +126,19 @@ export function CandleChart({
       const lc = await import('lightweight-charts');
       const box = boxRef.current;
       if (disposed || !box) return;
-      const chart = lc.createChart(box, { ...CHART_OPTIONS, width: box.clientWidth, height });
+      const chart = lc.createChart(box, {
+        ...CHART_OPTIONS,
+        width: box.clientWidth,
+        height: fill ? box.clientHeight : height,
+      });
       chartRef.current = chart;
       seriesRef.current = chart.addCandlestickSeries(CANDLE_COLORS);
       observer = new ResizeObserver(() => {
-        if (boxRef.current) chart.applyOptions({ width: boxRef.current.clientWidth });
+        if (!boxRef.current) return;
+        chart.applyOptions({
+          width: boxRef.current.clientWidth,
+          ...(fill ? { height: boxRef.current.clientHeight } : {}),
+        });
       });
       observer.observe(box);
       setReady(true);
@@ -145,7 +156,7 @@ export function CandleChart({
       loadedKeyRef.current = null;
       setReady(false);
     };
-  }, [height]);
+  }, [height, fill]);
 
   // Query data → series. Full `setData` only when the series is empty, the
   // (symbol, tf) changed, or a hole in history turned up; otherwise the tail
@@ -274,7 +285,11 @@ export function CandleChart({
   }, [ready, priceLines]);
 
   return (
-    <div ref={boxRef} style={{ height }} className="relative w-full">
+    <div
+      ref={boxRef}
+      style={fill ? undefined : { height }}
+      className={`relative w-full ${fill ? 'h-full min-h-[420px]' : ''}`}
+    >
       {tip && (
         <div
           data-testid="chart-tooltip"

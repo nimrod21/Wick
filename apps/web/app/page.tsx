@@ -127,7 +127,8 @@ function ChartPane({ symbol }: { symbol: string }) {
           ))}
         </span>
       }
-      bodyClassName="p-0"
+      className="flex min-h-0 flex-col"
+      bodyClassName="flex min-h-0 flex-1 flex-col p-0"
     >
       <div className="grid grid-cols-2 gap-2 border-b border-line p-3 sm:grid-cols-4">
         <Stat label="last" value={price(lastPrice)} />
@@ -150,7 +151,7 @@ function ChartPane({ symbol }: { symbol: string }) {
           {candles.isLoading ? 'loading candles…' : `no candles for ${symbol} ${tf}`}
         </Empty>
       ) : (
-        <CandleChart candles={candles.data!} symbol={symbol} tf={tf} height={420} />
+        <CandleChart candles={candles.data!} symbol={symbol} tf={tf} fill />
       )}
     </Panel>
   );

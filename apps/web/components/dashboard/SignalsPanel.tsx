@@ -103,8 +103,13 @@ export function SignalsPanel() {
               <span className={`w-10 shrink-0 text-[10px] uppercase ${s.vote === 'bull' ? 'text-green' : 'text-red'}`}>
                 {s.vote}
               </span>
-              <span className="w-12 shrink-0 text-muted">{s.symbol === null ? 'ALL' : shortSymbol(s.symbol)}</span>
-              <span className="min-w-0 flex-1 truncate" title={s.indicator}>
+              <span
+                className="w-20 shrink-0 truncate text-muted"
+                title={s.symbol === null ? 'market-wide' : s.symbol}
+              >
+                {s.symbol === null ? 'ALL' : shortSymbol(s.symbol)}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-right text-muted" title={s.indicator}>
                 {s.indicator}
               </span>
               <span

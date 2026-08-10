@@ -18,14 +18,13 @@
 import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, fillReason, TIMEFRAMES, type ModelStat, type Tf } from '@/lib/api';
+import { api, fillReason, TIMEFRAMES, type Tf } from '@/lib/api';
 import { useLive, useLiveTicks } from '@/lib/sse';
 import type { TradeMarker } from '@/components/charts/CandleChart';
 import { WatchlistPanel } from '@/components/dashboard/WatchlistPanel';
 import { AccountBox, OrderTicket } from '@/components/trade/OrderTicket';
 import { OpenPositions, TradeHistory } from '@/components/trade/Positions';
-import { Empty, Panel, PixelTitle, Stat } from '@/components/ui';
-import { num, pct } from '@/lib/format';
+import { Empty, Panel, PixelTitle } from '@/components/ui';
 
 const CandleChart = dynamic(() => import('@/components/charts/CandleChart').then((m) => m.CandleChart), {
   ssr: false,
@@ -48,7 +47,6 @@ export default function TradePage() {
     refetchInterval: 30_000,
   });
   const bots = useQuery({ queryKey: ['bots'], queryFn: api.bots, refetchInterval: 60_000 });
-  const models = useQuery({ queryKey: ['models'], queryFn: api.models, refetchInterval: 120_000 });
 
   // Ghost markers come from the bots' own fill reader — no new endpoint.
   const botFills = useQueries({
@@ -161,12 +159,6 @@ export default function TradePage() {
           </Panel>
           <Panel title={`Account — ${account.data?.name ?? 'you'}`}>
             <AccountBox account={account.data} />
-            <div className="mt-3 border-t border-line pt-2">
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted">
-                you vs bots (4h scoreboard)
-              </div>
-              <YouVsBots models={models.data} />
-            </div>
           </Panel>
         </div>
         </div>
@@ -187,70 +179,5 @@ export default function TradePage() {
         <TradeHistory fills={account.data?.fills ?? []} />
       </Panel>
     </div>
-  );
-}
-
-/**
- * You vs bots — the same 4h scoreboard the bots are judged on. Your manual
- * orders are decisions with provider `human`, so they land here for free once
- * the evaluator has scored them (4h after the order).
- */
-function YouVsBots({ models }: { models: ModelStat[] | undefined }) {
-  if (!models) return null;
-  const you = models.find((m) => m.provider === 'human');
-  // `code` is the SL/TP protector's own row — deterministic, nobody's judgement.
-  const bots = models.filter((m) => m.provider !== 'human' && m.provider !== 'code');
-
-  const wins = bots.reduce((a, m) => a + m.wins, 0);
-  const losses = bots.reduce((a, m) => a + m.losses, 0);
-  const scored = bots.filter((m) => m.meanScore !== null && m.evaluated > 0);
-  const evaluated = scored.reduce((a, m) => a + m.evaluated, 0);
-  const botMean =
-    evaluated > 0
-      ? scored.reduce((a, m) => a + (m.meanScore as number) * m.evaluated, 0) / evaluated
-      : null;
-
-  return (
-    <span className="flex flex-wrap items-center gap-4 text-[11px]">
-      <Side
-        label="you"
-        decisions={you?.decisions ?? 0}
-        winRate={you?.winRate ?? null}
-        meanScore={you?.meanScore ?? null}
-      />
-      <span className="text-muted">vs</span>
-      <Side
-        label="bots"
-        decisions={bots.reduce((a, m) => a + m.decisions, 0)}
-        winRate={wins + losses > 0 ? wins / (wins + losses) : null}
-        meanScore={botMean}
-      />
-    </span>
-  );
-}
-
-function Side({
-  label,
-  decisions,
-  winRate,
-  meanScore,
-}: {
-  label: string;
-  decisions: number;
-  winRate: number | null;
-  meanScore: number | null;
-}) {
-  return (
-    <span className="flex items-center gap-3">
-      <Stat
-        label={label}
-        value={
-          <span className={meanScore === null ? 'text-muted' : meanScore >= 0 ? 'text-green' : 'text-red'}>
-            {winRate === null ? '—' : pct(winRate * 100, 0)} win · score {num(meanScore, 2)}
-          </span>
-        }
-        sub={`${decisions} decision${decisions === 1 ? '' : 's'}`}
-      />
-    </span>
   );
 }

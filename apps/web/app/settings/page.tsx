@@ -6,6 +6,7 @@ import { Panel, PixelTitle } from '@/components/ui';
 import { ProvidersPanel } from '@/components/settings/Providers';
 import { WatchlistPanel } from '@/components/settings/Watchlist';
 import { JsonSetting } from '@/components/settings/JsonSetting';
+import { NotificationsSetting } from '@/components/settings/Notifications';
 import { useCrt } from '@/lib/prefs';
 
 export default function SettingsPage() {
@@ -19,6 +20,8 @@ export default function SettingsPage() {
 
       <ProvidersPanel />
       <WatchlistPanel />
+
+      <NotificationsSetting raw={value('intel.thresholds')} />
 
       <JsonSetting settingKey="guards.defaults" title="Guard defaults (advanced)" raw={value('guards.defaults')} />
       <JsonSetting

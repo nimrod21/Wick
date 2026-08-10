@@ -12,6 +12,7 @@ import { registerBotsReadRoutes } from './bots-read.js';
 import { registerBotsRoutes } from './bots.js';
 import { registerLearnBotRoutes, registerStatsRoutes } from './learn.js';
 import { registerProvidersRoutes } from './providers.js';
+import { registerIntelRoutes, registerNotificationsRoutes } from './intel.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -38,6 +39,9 @@ export async function buildServer() {
   await app.register(registerStatsRoutes, { prefix: '/api/stats' });
   // Phase 6 UI routes.
   await app.register(registerProvidersRoutes, { prefix: '/api/providers' });
+  // IMPL-3b intel page + notification bell.
+  await app.register(registerIntelRoutes, { prefix: '/api/intel' });
+  await app.register(registerNotificationsRoutes, { prefix: '/api/notifications' });
 
   return app;
 }

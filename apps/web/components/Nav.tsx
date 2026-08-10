@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { PixelTitle } from '@/components/ui';
+import { NotificationBell } from '@/components/Notifications';
 import { isConnected, onConnectionChange, useLive } from '@/lib/sse';
 
 const LINKS = [
@@ -11,6 +12,7 @@ const LINKS = [
   { href: '/bots', label: 'BOTS' },
   { href: '/market', label: 'MARKET' },
   { href: '/indicators', label: 'INDICATORS' },
+  { href: '/intel', label: 'INTEL' },
   { href: '/settings', label: 'SETTINGS' },
 ];
 
@@ -46,7 +48,10 @@ export function Nav() {
           );
         })}
       </div>
-      <span className="ml-auto flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted">
+      <div className="ml-auto">
+        <NotificationBell />
+      </div>
+      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted">
         <span className={`inline-block h-2 w-2 ${live ? 'bg-green' : 'bg-line'}`} aria-hidden />
         {live ? 'live' : 'offline'}
       </span>

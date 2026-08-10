@@ -20,9 +20,12 @@ import type {
   FillEvent,
   FundingEvent,
   IndicatorEvent,
+  MacroEvent,
+  NewsEvent,
   OutcomeEvent,
   TickEvent,
   TriggerEvent,
+  WhaleEvent,
 } from '@wick/shared';
 
 export type { WickEvent };
@@ -40,6 +43,9 @@ export const TOPICS: EventKind[] = [
   'trigger',
   'bot_status',
   'outcome',
+  'news',
+  'whale',
+  'macro',
 ];
 
 type Handler = (event: WickEvent) => void;
@@ -167,7 +173,10 @@ export type {
   FillEvent,
   FundingEvent,
   IndicatorEvent,
+  MacroEvent,
+  NewsEvent,
   OutcomeEvent,
   TickEvent,
   TriggerEvent,
+  WhaleEvent,
 };

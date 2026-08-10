@@ -16,7 +16,16 @@
  * reassess, but no exit ever waits for it.
  */
 
-import type { CandleEvent, FundingEvent, IndicatorEvent, TickEvent, TriggerEvent } from '@wick/shared';
+import type {
+  CandleEvent,
+  FundingEvent,
+  IndicatorEvent,
+  MacroEvent,
+  NewsEvent,
+  TickEvent,
+  TriggerEvent,
+  WhaleEvent,
+} from '@wick/shared';
 import { db } from '../db/client.js';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';
@@ -28,6 +37,29 @@ import { poolRemaining } from '../llm/quota.js';
 import { setVolatilityWindow } from '../paper/engine.js';
 import { listRunningBots, parseConfig } from '../bots/bot-store.js';
 import { requestWake, lastDecisionTs, type WakePriority } from '../bots/bot-runner.js';
+import { getIntelThresholds } from '../collectors/intel-settings.js';
+import { newsBurstRatio } from '../collectors/news/rss.js';
+import { MACRO_SYMBOLS } from '../collectors/macro/yahoo-macro.js';
+
+/**
+ * Priority per trigger type (PLAN §9 table + the IMPL-3b intel triggers).
+ * The engine passes the priority in-line; this map exists so read-only
+ * consumers (the notifications API) can colour a `trigger_log` row without
+ * a schema change.
+ */
+export const TRIGGER_PRIORITY: Record<string, WakePriority> = {
+  position_event: 1,
+  price_velocity: 1,
+  whale_big_move: 1,
+  rsi_cross: 2,
+  macd_cross: 2,
+  bb_breakout: 2,
+  volume_spike: 2,
+  funding_flip: 2,
+  news_burst: 2,
+  macro_shock: 2,
+  scheduled: 3,
+};
 
 // ── thresholds (settings row `triggers.thresholds`, seeded at migrate) ──
 
@@ -180,6 +212,12 @@ export interface TriggerMatch {
   /** position_event: only the owning bot. */
   onlyBotIds?: number[];
   /**
+   * Cooldown bucket for symbol-less (global) triggers that still need to be
+   * kept apart — e.g. `macro_shock` on gold must not silence oil. Ignored
+   * when `symbol` is set.
+   */
+  scopeKey?: string;
+  /**
    * `scheduled` wakes skip the per (type × symbol) cooldown — the bot's
    * cadence IS the discipline, and the candle-close dedupe already prevents
    * repeats. The per-bot 10-min floor and the budget gate still apply.
@@ -208,7 +246,7 @@ export function fireTrigger(match: TriggerMatch, ts: number = nowMs()): number {
   }
 
   // Per (type × symbol) cooldown — global, so it gates the whole evaluation.
-  const key = cooldownKey(match.type, symbol);
+  const key = cooldownKey(match.type, symbol ?? match.scopeKey ?? null);
   const last = match.skipTypeCooldown ? undefined : cooldowns.get(key);
   const cooldownMs = th.per_trigger_symbol_cooldown_min * 60_000;
   if (last !== undefined && ts - last < cooldownMs) {
@@ -278,6 +316,8 @@ export function resetTriggerState(): void {
   cooldowns.clear();
   positions.clear();
   armed.clear();
+  newsBurstOn = false;
+  macroShockOn.clear();
 }
 
 /** Seed rsi/atr/bb state from the newest persisted indicator row per symbol. */
@@ -514,6 +554,106 @@ function onFunding(e: FundingEvent): void {
   });
 }
 
+// ── intel triggers (IMPL-3b) ───────────────────────────────────────────
+//
+// News/whale/macro are GLOBAL: they carry no tradable symbol, so they wake
+// every running bot (symbol = null in fireTrigger). `news_burst` and
+// `macro_shock` are latched — the underlying reading stays above its
+// threshold for hours, and a level is not an event: only the crossing is.
+
+/** Yahoo symbol → indicator name ('GC=F' → 'gold'). */
+const MACRO_NAME_BY_SYMBOL: Record<string, string> = Object.fromEntries(
+  Object.entries(MACRO_SYMBOLS).map(([name, sym]) => [sym, name]),
+);
+
+let newsBurstOn = false;
+const macroShockOn = new Set<string>();
+
+function usdText(usd: number): string {
+  return `$${Math.round(usd).toLocaleString('en-US')}`;
+}
+
+function onWhale(e: WhaleEvent): void {
+  if (!isMarketWarm()) return;
+  try {
+    const intel = getIntelThresholds();
+    if (!intel.notify.whale_big_move) return;
+    if (e.usd === null || e.usd <= intel.whale_big_move_usd) return;
+    const where =
+      e.direction === 'inflow'
+        ? 'INTO an exchange wallet'
+        : e.direction === 'outflow'
+          ? 'OUT of an exchange wallet'
+          : 'between whale wallets';
+    const tag = e.addressTag ? ` (${e.addressTag})` : '';
+    fireTrigger({
+      type: 'whale_big_move',
+      priority: TRIGGER_PRIORITY.whale_big_move ?? 1,
+      symbol: null,
+      scopeKey: e.chain,
+      detail: `whale_big_move:${e.chain} ${e.amount.toFixed(2)} ${usdText(e.usd)} ${e.direction}${tag}`,
+      reason: `Woken by: a whale moved ${e.amount.toFixed(2)} ${e.chain.toUpperCase()} (~${usdText(e.usd)}) ${where}${tag}.`,
+    });
+  } catch (err) {
+    logger.error({ err, tx: e.tx }, 'trigger-engine: whale handler failed');
+  }
+}
+
+function onNews(e: NewsEvent): void {
+  if (!isMarketWarm()) return;
+  try {
+    const intel = getIntelThresholds();
+    if (!intel.notify.news_burst) return;
+    const ratio = newsBurstRatio(e.ts);
+    if (ratio === null) return;
+    if (ratio <= intel.news_burst_trigger_ratio) {
+      newsBurstOn = false;
+      return;
+    }
+    if (newsBurstOn) return; // already inside this burst
+    newsBurstOn = true;
+    fireTrigger({
+      type: 'news_burst',
+      priority: TRIGGER_PRIORITY.news_burst ?? 2,
+      symbol: null,
+      detail: `news_burst ratio=${ratio.toFixed(2)}x vs 7d hourly baseline · latest: ${e.title.slice(0, 90)}`,
+      reason: `Woken by: crypto headline volume is ${ratio.toFixed(1)}× its usual hourly rate. Latest headline: "${e.title}".`,
+    });
+  } catch (err) {
+    logger.error({ err }, 'trigger-engine: news handler failed');
+  }
+}
+
+function onMacro(e: MacroEvent): void {
+  if (!isMarketWarm()) return;
+  try {
+    const intel = getIntelThresholds();
+    if (!intel.notify.macro_shock) return;
+    if (e.changePct === null) return;
+    const name = MACRO_NAME_BY_SYMBOL[e.symbol];
+    if (!name) return;
+    const limit = intel.macro_shock_pct[name as keyof typeof intel.macro_shock_pct];
+    if (typeof limit !== 'number') return;
+    if (Math.abs(e.changePct) <= limit) {
+      macroShockOn.delete(name);
+      return;
+    }
+    if (macroShockOn.has(name)) return; // still the same shock
+    macroShockOn.add(name);
+    const dir = e.changePct >= 0 ? 'up' : 'down';
+    fireTrigger({
+      type: 'macro_shock',
+      priority: TRIGGER_PRIORITY.macro_shock ?? 2,
+      symbol: null,
+      scopeKey: name,
+      detail: `macro_shock:${name} ${e.changePct.toFixed(2)}% (limit ${limit}%) price=${e.price}`,
+      reason: `Woken by: ${name.toUpperCase()} moved ${Math.abs(e.changePct).toFixed(2)}% ${dir} on the day (more than the ${limit}% shock threshold).`,
+    });
+  } catch (err) {
+    logger.error({ err, symbol: e.symbol }, 'trigger-engine: macro handler failed');
+  }
+}
+
 // ── lifecycle ──────────────────────────────────────────────────────────
 
 let started = false;
@@ -530,6 +670,9 @@ export function startTriggerEngine(): void {
   unsubs.push(eventBus.on('candle', onCandle));
   unsubs.push(eventBus.on('funding', onFunding));
   unsubs.push(eventBus.on('fill', () => refreshPositions()));
+  unsubs.push(eventBus.on('whale', onWhale));
+  unsubs.push(eventBus.on('news', onNews));
+  unsubs.push(eventBus.on('macro', onMacro));
   refreshTimer = setInterval(() => {
     try {
       refreshPositions();

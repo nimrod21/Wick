@@ -279,6 +279,66 @@ export const ModelStatSchema = z.object({
 });
 export type ModelStat = z.infer<typeof ModelStatSchema>;
 
+// ── intel (IMPL-3b) ────────────────────────────────────────────────────
+
+export const NewsItemSchema = z.object({
+  id: num,
+  ts: num,
+  source: z.string(),
+  title: z.string(),
+  url: z.string(),
+  assets: z.array(z.string()),
+  /** null = the lexicon found no sentiment word — "no read", never zero. */
+  sentiment: nullNum,
+});
+export type NewsItem = z.infer<typeof NewsItemSchema>;
+
+export const NewsResponseSchema = z.object({
+  items: z.array(NewsItemSchema),
+  sources: z.array(z.string()),
+  assets: z.array(z.string()),
+});
+
+export const WhaleMoveSchema = z.object({
+  id: num,
+  ts: num,
+  chain: z.string(),
+  amount: num,
+  usd: nullNum,
+  direction: z.string(),
+  tx: z.string(),
+  addressTag: z.string().nullable(),
+});
+export type WhaleMove = z.infer<typeof WhaleMoveSchema>;
+
+export const MacroTileSchema = z.object({
+  name: z.string(),
+  symbol: z.string(),
+  price: nullNum,
+  changePct: nullNum,
+  ts: nullNum,
+  stale: z.boolean(),
+  history: z.array(z.object({ ts: num, price: num })),
+});
+export type MacroTile = z.infer<typeof MacroTileSchema>;
+
+export const MacroResponseSchema = z.object({
+  tiles: z.array(MacroTileSchema),
+  fearGreed: z.object({ value: num, classification: z.string(), ts: num }).nullable(),
+});
+export type MacroResponse = z.infer<typeof MacroResponseSchema>;
+
+export const NotificationSchema = z.object({
+  id: num,
+  ts: num,
+  type: z.string(),
+  detail: z.string().nullable(),
+  priority: num,
+  fired: z.boolean(),
+  botRows: num,
+});
+export type Notification = z.infer<typeof NotificationSchema>;
+
 const TestResultSchema = z.object({
   ok: z.boolean(),
   provider: z.string().optional(),
@@ -407,6 +467,25 @@ export const api = {
       'GET',
       '/api/settings',
     ).then((r) => r.settings),
+
+  news: (opts: { asset?: string; source?: string; limit?: number } = {}) =>
+    request(NewsResponseSchema, 'GET', `/api/intel/news${qs({ ...opts, limit: opts.limit ?? 150 })}`),
+
+  whales: (opts: { minUsd?: number; limit?: number } = {}) =>
+    request(
+      z.object({ moves: z.array(WhaleMoveSchema) }),
+      'GET',
+      `/api/intel/whales${qs({ minUsd: opts.minUsd, limit: opts.limit ?? 150 })}`,
+    ).then((r) => r.moves),
+
+  macro: () => request(MacroResponseSchema, 'GET', '/api/intel/macro'),
+
+  notifications: (limit = 50) =>
+    request(
+      z.object({ notifications: z.array(NotificationSchema) }),
+      'GET',
+      `/api/notifications${qs({ limit })}`,
+    ).then((r) => r.notifications),
 
   putSetting: (key: string, value: string) =>
     request(z.object({ ok: z.boolean() }), 'PUT', `/api/settings/${key}`, { value }),

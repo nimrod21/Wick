@@ -50,11 +50,14 @@ export function Sparkline({
   width = 120,
   height = 28,
   className = '',
+  label = 'equity sparkline',
 }: {
   values: number[];
   width?: number;
   height?: number;
   className?: string;
+  /** Screen-reader name — override when the series is not equity. */
+  label?: string;
 }) {
   if (values.length < 2) {
     return (
@@ -85,7 +88,7 @@ export function Sparkline({
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label="equity sparkline"
+      aria-label={label}
     >
       <path d={d} fill="none" stroke={up ? 'var(--green)' : 'var(--red)'} strokeWidth={1} />
     </svg>

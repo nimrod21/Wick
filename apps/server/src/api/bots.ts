@@ -36,6 +36,12 @@ import {
   stopBot,
   updateBot,
 } from '../bots/bot-store.js';
+import { nextWakeTs } from '../bots/scheduler.js';
+
+/** Bot payload + when the cadence scheduler will next wake it (IMPL-5). */
+function botViewWithWake(bot: BotRow): Record<string, unknown> {
+  return { ...botView(bot), nextWakeTs: nextWakeTs(bot) };
+}
 
 /**
  * Fleet lookup. The human trading account is a `bots` row too (IMPL-4) but it
@@ -85,7 +91,7 @@ const patchSchema = z.object({
 });
 
 export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/', async () => ({ bots: listTradingBots().map(botView) }));
+  app.get('/', async () => ({ bots: listTradingBots().map(botViewWithWake) }));
 
   app.post('/', async (req, reply) => {
     const body = createSchema.safeParse(req.body);
@@ -98,7 +104,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       status: body.data.status,
       config: body.data.config,
     });
-    return reply.code(201).send({ bot: botView(bot) });
+    return reply.code(201).send({ bot: botViewWithWake(bot) });
   });
 
   app.get('/:id', async (req, reply) => {
@@ -106,7 +112,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
     const bot = fleetBot(params.data.id);
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
-    return { bot: botView(bot) };
+    return { bot: botViewWithWake(bot) };
   });
 
   app.patch('/:id', async (req, reply) => {
@@ -123,7 +129,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       addFunds: body.data.add_funds,
     });
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
-    return { bot: botView(bot) };
+    return { bot: botViewWithWake(bot) };
   });
 
   app.delete('/:id', async (req, reply) => {
@@ -148,7 +154,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       if (!fleetBot(params.data.id)) return reply.code(404).send({ error: 'bot not found' });
       const bot = fn(params.data.id);
       if (!bot) return reply.code(404).send({ error: 'bot not found' });
-      return { bot: botView(bot) };
+      return { bot: botViewWithWake(bot) };
     });
   };
 

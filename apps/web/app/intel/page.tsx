@@ -4,10 +4,15 @@
  * Intel (IMPL-3b) — depth for the three non-TA sources. Everything shown
  * here is already wired into the indicator pipeline (IMPL-3a); this page is
  * where the raw rows behind those votes are readable.
+ *
+ * `?tab=whales|macro` opens straight onto a tab so the dashboard teasers can
+ * deep-link (IMPL-5). `useSearchParams` opts a route into client rendering,
+ * hence the Suspense boundary Next requires around it.
  */
 
-import { useState } from 'react';
-import { PixelTitle } from '@/components/ui';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Empty, PixelTitle } from '@/components/ui';
 import { NewsTab } from '@/components/intel/NewsTab';
 import { WhalesTab } from '@/components/intel/WhalesTab';
 import { MacroTab } from '@/components/intel/MacroTab';
@@ -20,8 +25,24 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
+function isTabId(value: string | null): value is TabId {
+  return TABS.some((t) => t.id === value);
+}
+
 export default function IntelPage() {
-  const [tab, setTab] = useState<TabId>('news');
+  return (
+    <Suspense fallback={<Empty>loading intel…</Empty>}>
+      <IntelTabs />
+    </Suspense>
+  );
+}
+
+function IntelTabs() {
+  const params = useSearchParams();
+  const requested = params.get('tab');
+  // The URL only picks the LANDING tab — clicking a tab afterwards must not be
+  // undone by a re-render, so it seeds state instead of driving it.
+  const [tab, setTab] = useState<TabId>(isTabId(requested) ? requested : 'news');
 
   return (
     <div className="space-y-4">

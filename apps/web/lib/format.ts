@@ -41,6 +41,21 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
   return `${Math.round(s / 86_400)}d`;
 }
 
+/**
+ * Time left until a future ts ("4m", "2h") — the mirror of `ago`. Null (a bot
+ * that is not running) stays "—": no countdown is invented for a wake that
+ * will never come.
+ */
+export function until(ts: number | null | undefined, now = Date.now()): string {
+  if (!ts) return '—';
+  const s = Math.round((ts - now) / 1000);
+  if (s <= 0) return 'now';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86_400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86_400)}d`;
+}
+
 /** Sign class for P&L-ish numbers — red is reserved for losses (PLAN §12). */
 export function signClass(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n) || n === 0) return 'text-muted';

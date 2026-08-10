@@ -79,6 +79,8 @@ export const BotSchema = z.object({
   createdTs: num,
   stoppedTs: nullNum,
   positions: num,
+  /** Next scheduled cadence wake, UTC ms. Null = not running (IMPL-5). */
+  nextWakeTs: nullNum,
 });
 export type Bot = z.infer<typeof BotSchema>;
 

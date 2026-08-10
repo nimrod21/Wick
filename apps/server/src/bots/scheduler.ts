@@ -16,8 +16,10 @@
 import type { CandleEvent } from '@wick/shared';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';
+import { TF_MS, type WickTf } from '../collectors/crypto/binance-rest.js';
 import { isMarketWarm } from '../market/market-state.js';
 import { fireTrigger } from '../market/trigger-engine.js';
+import type { BotRow } from '../paper/engine.js';
 import { listRunningBots, parseConfig } from './bot-store.js';
 import { hashString } from './snapshot.js';
 
@@ -26,6 +28,24 @@ export const STAGGER_MAX_MS = 30_000;
 
 export function staggerMs(botId: number): number {
   return hashString(`wake:${botId}`) % STAGGER_MAX_MS;
+}
+
+/**
+ * When this bot is next due to wake: the next close of its cadence timeframe
+ * plus its own stagger. Candle boundaries are epoch-aligned (epoch is a UTC
+ * midnight), so the next close is pure arithmetic — no candle table lookup.
+ *
+ * `null` for anything that will not wake on a cadence: a stopped or busted
+ * bot, or a cadence timeframe Wick does not store. The UI renders that as "—"
+ * rather than inventing a countdown for a bot that is not running.
+ */
+export function nextWakeTs(bot: BotRow, now = Date.now()): number | null {
+  if (bot.status !== 'running') return null;
+  const step = TF_MS[parseConfig(bot).cadence_tf as WickTf] as number | undefined;
+  if (step === undefined) return null;
+  const stagger = staggerMs(bot.id);
+  const thisClose = Math.floor(now / step) * step + stagger;
+  return thisClose > now ? thisClose : thisClose + step;
 }
 
 /** `${botId}:${tf}` → candle ts already scheduled. */

@@ -23,6 +23,7 @@ import { startFundingOi, stopFundingOi } from '../collectors/macro/funding-oi.js
 import { startMacro, stopMacro } from '../collectors/macro/yahoo-macro.js';
 import { startRssNews, stopRssNews } from '../collectors/news/rss.js';
 import { startBtcWhales, stopBtcWhales } from '../collectors/onchain/btc-whales.js';
+import { refreshOpenRouterModels } from '../llm/model-discovery.js';
 
 const tasks: ScheduledTask[] = [];
 let running = false;
@@ -50,6 +51,19 @@ export function startScheduler(): void {
       safeRun('self-heal', selfHealGaps);
     }),
   );
+
+  // OpenRouter free-model catalogue: daily at 04:17, plus one boot call that
+  // no-ops while the cached list is under a day old (model-discovery.ts).
+  tasks.push(
+    cron.schedule('17 4 * * *', () => {
+      safeRun('openrouter-models', async () => {
+        await refreshOpenRouterModels();
+      });
+    }),
+  );
+  safeRun('openrouter-models', async () => {
+    await refreshOpenRouterModels();
+  });
 
   // Macro collectors (self-driving, own cron inside). Lifecycle hitched to
   // the scheduler so start/stop stays unified.

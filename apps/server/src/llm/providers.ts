@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { db } from '../db/client.js';
+import { readDiscoveredModels } from './model-discovery.js';
 
 export type AdapterKind = 'openai-compat' | 'gemini' | 'stub';
 export type AuthStyle = 'bearer' | 'gemini-header' | 'none';
@@ -21,6 +22,12 @@ export interface ProviderRecord {
   rpm: number;
   rpd: number;
   enabled: boolean;
+  /**
+   * Let `/models` discovery top up this provider's list (OpenRouter only).
+   * Set `"discover": false` on the settings row to pin the list by hand —
+   * an explicit registry override always wins.
+   */
+  discover?: boolean;
 }
 
 /** Fallbacks only — mirrors the migrate-time seed. Settings win. */
@@ -44,6 +51,7 @@ const SettingsRowSchema = z.object({
   rpm: z.number().optional(),
   rpd: z.number().optional(),
   enabled: z.boolean().optional(),
+  discover: z.boolean().optional(),
 });
 
 function inferAuthStyle(id: string): AuthStyle {
@@ -54,6 +62,23 @@ function inferAuthStyle(id: string): AuthStyle {
 
 function inferAdapter(id: string): AdapterKind {
   return id === 'gemini' ? 'gemini' : 'openai-compat';
+}
+
+/**
+ * Merge the discovered `:free` catalogue into OpenRouter's model list.
+ * Pinned ids that still exist upstream keep their position (the router calls
+ * `models[0]`), delisted ones are dropped, and the rest of the catalogue
+ * follows as fallbacks. Opting out (`discover: false`) or an empty/absent
+ * cache leaves the record untouched.
+ */
+function withDiscoveredModels(p: ProviderRecord): ProviderRecord {
+  if (p.id !== 'openrouter' || p.discover === false) return p;
+  const cache = readDiscoveredModels();
+  if (!cache) return p;
+  const discovered = new Set(cache.models);
+  const pinned = p.models.filter((m) => discovered.has(m));
+  const models = [...pinned, ...cache.models.filter((m) => !pinned.includes(m))];
+  return models.length > 0 ? { ...p, models } : p;
 }
 
 /**
@@ -72,7 +97,9 @@ export function getProviders(): ProviderRecord[] {
       raw = null;
     }
   }
-  if (!Array.isArray(raw)) return PROVIDER_DEFAULTS.map((p) => ({ ...p, models: [...p.models] }));
+  if (!Array.isArray(raw)) {
+    return PROVIDER_DEFAULTS.map((p) => withDiscoveredModels({ ...p, models: [...p.models] }));
+  }
 
   const out: ProviderRecord[] = [];
   for (const entry of raw) {
@@ -80,18 +107,23 @@ export function getProviders(): ProviderRecord[] {
     if (!parsed.success) continue; // malformed row → skip, don't crash
     const s = parsed.data;
     const def = PROVIDER_DEFAULTS.find((d) => d.id === s.id);
-    out.push({
-      id: s.id,
-      baseUrl: s.baseUrl ?? def?.baseUrl ?? '',
-      authStyle: s.authStyle ?? def?.authStyle ?? inferAuthStyle(s.id),
-      adapter: s.adapter ?? def?.adapter ?? inferAdapter(s.id),
-      models: s.models ?? def?.models ?? [],
-      rpm: s.rpm ?? def?.rpm ?? 10,
-      rpd: s.rpd ?? def?.rpd ?? 100,
-      enabled: s.enabled ?? def?.enabled ?? false,
-    });
+    out.push(
+      withDiscoveredModels({
+        id: s.id,
+        baseUrl: s.baseUrl ?? def?.baseUrl ?? '',
+        authStyle: s.authStyle ?? def?.authStyle ?? inferAuthStyle(s.id),
+        adapter: s.adapter ?? def?.adapter ?? inferAdapter(s.id),
+        models: s.models ?? def?.models ?? [],
+        rpm: s.rpm ?? def?.rpm ?? 10,
+        rpd: s.rpd ?? def?.rpd ?? 100,
+        enabled: s.enabled ?? def?.enabled ?? false,
+        discover: s.discover,
+      }),
+    );
   }
-  return out.length > 0 ? out : PROVIDER_DEFAULTS.map((p) => ({ ...p, models: [...p.models] }));
+  return out.length > 0
+    ? out
+    : PROVIDER_DEFAULTS.map((p) => withDiscoveredModels({ ...p, models: [...p.models] }));
 }
 
 export function getProvider(id: string): ProviderRecord | null {

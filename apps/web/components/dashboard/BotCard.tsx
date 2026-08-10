@@ -8,6 +8,10 @@
  * renders the same card read-only. The whole card links to the detail page via
  * a stretched overlay link, so the action buttons can sit inside it without
  * nesting interactive elements.
+ *
+ * `small` is the dashboard bot-strip variant (IMPL-5): frame status, name,
+ * equity, spark and the next wake — nothing else, and no per-bot
+ * outcome/position fetches, so a strip of N bots costs N queries, not 3N.
  */
 
 import Link from 'next/link';
@@ -15,7 +19,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Bot } from '@/lib/api';
 import { Btn, PixelTitle, Sparkline, Stat, StatusLed } from '@/components/ui';
-import { pct, shortSymbol, usd } from '@/lib/format';
+import { pct, shortSymbol, until, usd } from '@/lib/format';
 
 const DAY_MS = 24 * 3_600_000;
 
@@ -25,7 +29,31 @@ const FRAME: Record<Bot['status'], string> = {
   busted: 'frame-busted',
 };
 
-export function BotCard({ bot, actions = false }: { bot: Bot; actions?: boolean }) {
+/** "next wake in 12m" — "—" for anything not on a cadence (stopped/busted). */
+function NextWake({ bot, className = '' }: { bot: Bot; className?: string }) {
+  return (
+    <span
+      className={`tnum text-[10px] text-muted ${className}`}
+      title={
+        bot.nextWakeTs === null
+          ? 'not running — no scheduled wake'
+          : `next ${bot.config.cadence_tf} cadence wake at ${new Date(bot.nextWakeTs).toLocaleTimeString([], { hour12: false })}`
+      }
+    >
+      next wake {bot.nextWakeTs === null ? '—' : `in ${until(bot.nextWakeTs)}`}
+    </span>
+  );
+}
+
+export function BotCard({
+  bot,
+  actions = false,
+  small = false,
+}: {
+  bot: Bot;
+  actions?: boolean;
+  small?: boolean;
+}) {
   const { data: equity } = useQuery({
     queryKey: ['bot-equity', bot.id],
     queryFn: () => api.equity(bot.id, 200),
@@ -35,11 +63,13 @@ export function BotCard({ bot, actions = false }: { bot: Bot; actions?: boolean 
     queryKey: ['bot-outcomes', bot.id, 'card'],
     queryFn: () => api.outcomes(bot.id, 300),
     refetchInterval: 60_000,
+    enabled: !small,
   });
   const { data: positions } = useQuery({
     queryKey: ['bot-positions', bot.id],
     queryFn: () => api.positions(bot.id),
     refetchInterval: 30_000,
+    enabled: !small,
   });
 
   const since = Date.now() - DAY_MS;
@@ -65,6 +95,32 @@ export function BotCard({ bot, actions = false }: { bot: Bot; actions?: boolean 
 
   const pnlPct = bot.bankrollStart > 0 ? ((bot.equity - bot.bankrollStart) / bot.bankrollStart) * 100 : null;
 
+  if (small) {
+    return (
+      <Link
+        href={`/bots/${bot.id}`}
+        className={`panel flex min-w-[190px] items-center gap-3 p-2 hover:border-cyan ${FRAME[bot.status]}`}
+      >
+        <StatusLed status={bot.status} />
+        <span className="min-w-0 flex-1">
+          <PixelTitle as="span" className="block truncate text-fg">
+            {bot.name}
+          </PixelTitle>
+          <span className="mt-1 flex items-baseline gap-2">
+            <span className="tnum text-sm">{usd(bot.equity, 0)}</span>
+            <span
+              className={`tnum text-[10px] ${pnlPct === null || pnlPct === 0 ? 'text-muted' : pnlPct > 0 ? 'text-green' : 'text-red'}`}
+            >
+              {pct(pnlPct, 1)}
+            </span>
+          </span>
+          <NextWake bot={bot} className="mt-0.5 block" />
+        </span>
+        <Sparkline values={spark} width={56} height={24} />
+      </Link>
+    );
+  }
+
   return (
     <article className={`panel relative p-3 ${FRAME[bot.status]}`}>
       <Link href={`/bots/${bot.id}`} className="absolute inset-0 z-10" aria-label={`open ${bot.name}`} />
@@ -73,7 +129,10 @@ export function BotCard({ bot, actions = false }: { bot: Bot; actions?: boolean 
         <PixelTitle as="span" className="text-fg">
           {bot.name}
         </PixelTitle>
-        <StatusLed status={bot.status} label />
+        <span className="flex items-center gap-2">
+          <NextWake bot={bot} />
+          <StatusLed status={bot.status} label />
+        </span>
       </div>
 
       <div className="mt-3 flex items-end justify-between gap-3">

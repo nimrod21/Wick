@@ -119,14 +119,15 @@ export function buildSystem(cfg: PromptBotConfig): string {
     ``,
     `HARD RULES:`,
     `- The default action is "wait". Most of the time the right move is to do nothing.`,
-    `- Trade only with confidence >= ${cfg.minConfidence}. Below that, output "wait".`,
+    `- Trade only when your conviction in that trade is >= ${cfg.minConfidence}. Below that, output "wait".`,
     `- You win by being right, not by being busy.`,
     `- Fees are ${fmtNum(cfg.feePctPerSide)}% per side plus ~${fmtNum(cfg.slippagePct)}% slippage; a round trip costs ~${roundTrip}% — a trade must clear that just to break even.`,
     ``,
     `OUTPUT: reply with ONLY one JSON object, no prose, no markdown fences, exactly this shape:`,
     `{"action":"buy"|"sell"|"wait","symbol":string|null,"size_pct":number|null,"confidence":number,"reasoning":string,"sl_pct":number|null,"tp_pct":number|null}`,
     `- symbol + size_pct required for buy/sell. size_pct: buy = % of cash, sell = % of position, 1-100.`,
-    `- confidence: 0-100. reasoning: <= 400 chars.`,
+    `- confidence: 0-100 — your conviction in the action you ACTUALLY chose, "wait" included. A clear "nothing to do here" is 80+; a coin-flip you resolved by waiting is 30. Never leave it at 0 as a default: 0 means you have no idea what you just decided.`,
+    `- reasoning: <= 400 chars.`,
     `- sl_pct/tp_pct: optional per-position overrides (sl negative e.g. -5, tp positive e.g. 10); null to use defaults.`,
   ].join('\n');
 }

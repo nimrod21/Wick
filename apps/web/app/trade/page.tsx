@@ -108,7 +108,10 @@ export default function TradePage() {
           component for the whole app, one batched tick subscription. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <WatchlistPanel symbol={symbol} onSelectSymbol={setSymbol} variant="compact" />
-        <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[2fr_1fr]">
+        {/* items-start: columns hug their content — the chart panel must not
+            stretch to the ticket column's height (it grew whenever the ticket
+            showed a hint line, which read as the chart "moving"). */}
+        <div className="grid min-w-0 flex-1 items-start gap-4 lg:grid-cols-[2fr_1fr]">
         <Panel
           title={`${symbol} — ${tf}`}
           right={

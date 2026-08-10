@@ -6,8 +6,16 @@
 using System;
 using System.Diagnostics;
 using System.Net;
+using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
+
+[assembly: AssemblyTitle("Wick")]
+[assembly: AssemblyProduct("Wick — trading intelligence platform")]
+[assembly: AssemblyDescription("Starts the Wick server + dashboard and opens it in your browser")]
+[assembly: AssemblyCompany("Luka")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 static class WickLauncher
 {

@@ -8,6 +8,7 @@ import { isConnected, onConnectionChange, useLive } from '@/lib/sse';
 
 const LINKS = [
   { href: '/', label: 'DASH' },
+  { href: '/bots', label: 'BOTS' },
   { href: '/market', label: 'MARKET' },
   { href: '/settings', label: 'SETTINGS' },
 ];

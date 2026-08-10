@@ -263,8 +263,17 @@ export const api = {
   botAction: (id: number, action: 'start' | 'stop' | 'reset') =>
     request(z.object({ bot: BotSchema }), 'POST', `/api/bots/${id}/${action}`, {}).then((r) => r.bot),
 
-  patchBot: (id: number, patch: { name?: string; config?: Partial<BotConfig> }) =>
-    request(z.object({ bot: BotSchema }), 'PATCH', `/api/bots/${id}`, patch).then((r) => r.bot),
+  patchBot: (
+    id: number,
+    patch: { name?: string; config?: Partial<BotConfig>; add_funds?: number },
+  ) => request(z.object({ bot: BotSchema }), 'PATCH', `/api/bots/${id}`, patch).then((r) => r.bot),
+
+  createBot: (input: { name: string; bankroll: number; config?: Partial<BotConfig> }) =>
+    request(z.object({ bot: BotSchema }), 'POST', '/api/bots', input).then((r) => r.bot),
+
+  /** Hard delete — server refuses with 409 while the bot is running. */
+  deleteBot: (id: number) =>
+    request(z.object({ ok: z.boolean(), deleted: num }), 'DELETE', `/api/bots/${id}`),
 
   positions: (id: number) =>
     request(z.object({ positions: z.array(PositionSchema) }), 'GET', `/api/bots/${id}/positions`)

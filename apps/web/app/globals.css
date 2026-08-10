@@ -90,6 +90,13 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Bot card frame = lifecycle status, readable at a glance (LAYOUT.md): lit
+   phosphor frame running · dim default frame stopped · red frame busted.
+   Declared after `.panel` so it wins the border-color cascade. */
+.frame-running { border-color: var(--green); }
+.frame-stopped { border-color: var(--border); }
+.frame-busted  { border-color: var(--red); }
+
 .tnum {
   font-variant-numeric: tabular-nums;
 }

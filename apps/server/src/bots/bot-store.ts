@@ -185,19 +185,58 @@ export function createBot(input: CreateBotInput): BotRow {
 export interface UpdateBotInput {
   name?: string;
   config?: Partial<BotConfig>;
+  /**
+   * Bankroll top-up ("give the bot more money"): credited to cash AND added to
+   * bankroll_start, so P&L stays measured against capital actually put in
+   * (crediting cash alone would read as instant profit). Positive only —
+   * withdrawals would have to reconcile against open positions.
+   */
+  addFunds?: number;
 }
 
-/** PATCH: rename and/or merge config fields (unknown fields ignored). */
+/** PATCH: rename, merge config fields, and/or top up the bankroll. */
 export function updateBot(botId: number, patch: UpdateBotInput): BotRow | null {
   const bot = getBot(botId);
   if (!bot) return null;
   const merged: BotConfig = { ...parseConfig(bot), ...(patch.config ?? {}) };
-  db.prepare('UPDATE bots SET name = ?, config_json = ? WHERE id = ?').run(
-    patch.name ?? bot.name,
-    JSON.stringify(merged),
-    botId,
-  );
-  return getBot(botId) as BotRow;
+  const funds = patch.addFunds !== undefined && patch.addFunds > 0 ? patch.addFunds : 0;
+  db.prepare(
+    `UPDATE bots SET name = ?, config_json = ?, cash = cash + ?, bankroll_start = bankroll_start + ?
+       WHERE id = ?`,
+  ).run(patch.name ?? bot.name, JSON.stringify(merged), funds, funds, botId);
+  const updated = getBot(botId) as BotRow;
+  if (funds > 0) {
+    logger.info({ bot: botId, added: funds, cash: updated.cash }, 'bot bankroll topped up');
+  }
+  return updated;
+}
+
+/**
+ * Hard delete (no archive): the bot row plus everything keyed to it —
+ * decisions (and their outcomes, keyed by decision_id), fills, positions,
+ * equity_snapshots, journal, lessons_current, indicator_stats, trigger_log.
+ *
+ * Delete over archive because none of these tables carry a soft-delete column
+ * and every read path (`listBots`, stats, the model scoreboard) would need an
+ * "is it a corpse?" filter for data no one asked to keep — `reset` already
+ * covers "keep the bot, drop the run". Orphan rows are worse: `outcomes` and
+ * `trigger_log` are joined by id, and a recycled bot id would silently inherit
+ * a dead bot's history. Refused while `running` — stop it first, so no wake or
+ * fill can be mid-flight against rows that are about to vanish.
+ */
+export function deleteBot(botId: number): 'deleted' | 'not_found' | 'running' {
+  const bot = getBot(botId);
+  if (!bot) return 'not_found';
+  if (bot.status === 'running') return 'running';
+  db.transaction(() => {
+    db.prepare('DELETE FROM outcomes WHERE decision_id IN (SELECT id FROM decisions WHERE bot_id = ?)').run(botId);
+    for (const table of ['decisions', 'fills', 'positions', 'equity_snapshots', 'journal', 'lessons_current', 'indicator_stats', 'trigger_log']) {
+      db.prepare(`DELETE FROM ${table} WHERE bot_id = ?`).run(botId);
+    }
+    db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
+  })();
+  logger.warn({ bot: botId, name: bot.name }, 'bot deleted');
+  return 'deleted';
 }
 
 export function startBot(botId: number): BotRow | null {

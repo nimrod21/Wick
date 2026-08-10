@@ -72,6 +72,15 @@ export default function BotPage() {
     if (e.botId === botId) void qc.invalidateQueries({ queryKey: ['bot-triggers', botId] });
   });
 
+  /** Highest-weight indicators first — the ones actually swaying this bot. */
+  const trusted = useMemo(
+    () =>
+      [...(stats.data ?? [])]
+        .sort((a, b) => b.weight - a.weight || b.samples - a.samples)
+        .slice(0, 8),
+    [stats.data],
+  );
+
   /** Protector exits are `trigger_type = 'protector'` with `sl:`/`tp:` detail. */
   const exitReasons = useMemo(() => {
     const map = new Map<number, 'sl' | 'tp'>();
@@ -115,6 +124,19 @@ export default function BotPage() {
   return (
     <div className="space-y-4">
       <BotControls bot={b} />
+
+      {/* What this bot currently believes in — the learning loop made visible. */}
+      <Panel
+        title="Trusted indicators"
+        right={
+          <span className="text-[10px] uppercase tracking-wider text-muted">
+            {trusted.length > 0 ? `top ${trusted.length} of ${stats.data?.length ?? 0} by weight` : 'weights start at 1.00'}
+          </span>
+        }
+        bodyClassName="p-0"
+      >
+        <IndicatorStats stats={trusted} />
+      </Panel>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_2fr]">
         <Panel title="Equity" bodyClassName="p-0">

@@ -4,12 +4,20 @@
  *   GET    /api/bots                 — list (with equity/drawdown)
  *   POST   /api/bots                 — create {name, bankroll, config?}
  *   GET    /api/bots/:id             — one bot
- *   PATCH  /api/bots/:id             — rename / merge config fields
+ *   PATCH  /api/bots/:id             — rename / merge config / add_funds top-up
+ *   DELETE /api/bots/:id             — hard delete, refused while running (409)
  *   POST   /api/bots/:id/start|stop|reset
  *   GET    /api/bots/:id/decisions   — newest first (?limit, default 50)
  *   GET    /api/bots/:id/triggers    — trigger_log incl. gated rows (?limit)
  *
  * Read-only position/fill/equity routes live in `bots-read.ts` (same prefix).
+ *
+ * DELETE is a hard delete, not an archive: it removes the bot row plus its
+ * decisions (+ their outcomes), fills, positions, equity_snapshots, journal,
+ * lessons_current, indicator_stats and trigger_log rows in one transaction.
+ * Rationale in `bot-store.deleteBot` — no soft-delete column exists, every read
+ * path would need a corpse filter, and orphaned outcomes/trigger rows would be
+ * inherited by a recycled bot id. `reset` remains the non-destructive option.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -20,6 +28,7 @@ import {
   createBot,
   getBot,
   listBots,
+  deleteBot,
   resetBot,
   startBot,
   stopBot,
@@ -57,6 +66,8 @@ const createSchema = z.object({
 const patchSchema = z.object({
   name: z.string().min(1).max(60).optional(),
   config: configSchema.optional(),
+  /** Bankroll top-up in USD — credited to cash and bankroll_start alike. */
+  add_funds: z.number().positive().max(10_000_000).optional(),
 });
 
 export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
@@ -91,9 +102,24 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     if (!body.success) {
       return reply.code(400).send({ error: 'bad body', issues: body.error.issues });
     }
-    const bot = updateBot(params.data.id, body.data);
+    const bot = updateBot(params.data.id, {
+      name: body.data.name,
+      config: body.data.config,
+      addFunds: body.data.add_funds,
+    });
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
     return { bot: botView(bot) };
+  });
+
+  app.delete('/:id', async (req, reply) => {
+    const params = paramsSchema.safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'bad bot id' });
+    const result = deleteBot(params.data.id);
+    if (result === 'not_found') return reply.code(404).send({ error: 'bot not found' });
+    if (result === 'running') {
+      return reply.code(409).send({ error: 'bot is running — stop it before deleting' });
+    }
+    return { ok: true, deleted: params.data.id };
   });
 
   const action = (

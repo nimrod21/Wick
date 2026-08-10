@@ -1,14 +1,31 @@
 'use client';
 
+/**
+ * One bot, one card. The **frame colour is the status** (LAYOUT.md): lit green
+ * running · dim gray stopped · red busted — readable without reading a word.
+ *
+ * `actions` turns on the fleet-management row (/bots page); the dashboard grid
+ * renders the same card read-only. The whole card links to the detail page via
+ * a stretched overlay link, so the action buttons can sit inside it without
+ * nesting interactive elements.
+ */
+
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Bot } from '@/lib/api';
-import { PixelTitle, Sparkline, Stat, StatusLed } from '@/components/ui';
+import { Btn, PixelTitle, Sparkline, Stat, StatusLed } from '@/components/ui';
 import { pct, shortSymbol, usd } from '@/lib/format';
 
 const DAY_MS = 24 * 3_600_000;
 
-export function BotCard({ bot }: { bot: Bot }) {
+const FRAME: Record<Bot['status'], string> = {
+  running: 'frame-running',
+  stopped: 'frame-stopped',
+  busted: 'frame-busted',
+};
+
+export function BotCard({ bot, actions = false }: { bot: Bot; actions?: boolean }) {
   const { data: equity } = useQuery({
     queryKey: ['bot-equity', bot.id],
     queryFn: () => api.equity(bot.id, 200),
@@ -49,10 +66,9 @@ export function BotCard({ bot }: { bot: Bot }) {
   const pnlPct = bot.bankrollStart > 0 ? ((bot.equity - bot.bankrollStart) / bot.bankrollStart) * 100 : null;
 
   return (
-    <Link
-      href={`/bots/${bot.id}`}
-      className="panel block p-3 transition-colors hover:border-cyan"
-    >
+    <article className={`panel relative p-3 ${FRAME[bot.status]}`}>
+      <Link href={`/bots/${bot.id}`} className="absolute inset-0 z-10" aria-label={`open ${bot.name}`} />
+
       <div className="flex items-center justify-between gap-2">
         <PixelTitle as="span" className="text-fg">
           {bot.name}
@@ -96,6 +112,120 @@ export function BotCard({ bot }: { bot: Bot }) {
           ))
         )}
       </div>
-    </Link>
+
+      {actions && <CardActions bot={bot} />}
+    </article>
+  );
+}
+
+/** start / stop / add funds / delete — the whole point of the /bots page. */
+function CardActions({ bot }: { bot: Bot }) {
+  const qc = useQueryClient();
+  const [funds, setFunds] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const invalidate = (): void => {
+    void qc.invalidateQueries({ queryKey: ['bots'] });
+    void qc.invalidateQueries({ queryKey: ['bot', bot.id] });
+    void qc.invalidateQueries({ queryKey: ['bot-equity', bot.id] });
+  };
+
+  const action = useMutation({
+    mutationFn: (a: 'start' | 'stop') => api.botAction(bot.id, a),
+    onSuccess: invalidate,
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const topUp = useMutation({
+    mutationFn: (amount: number) => api.patchBot(bot.id, { add_funds: amount }),
+    onSuccess: () => {
+      setFunds(null);
+      invalidate();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => api.deleteBot(bot.id),
+    onSuccess: () => {
+      // Drop this bot's queries before the list refetch unmounts the card —
+      // invalidating them instead would refetch equity/positions for a bot that
+      // no longer exists (404s in the console).
+      qc.removeQueries({ predicate: (q) => q.queryKey[1] === bot.id });
+      void qc.invalidateQueries({ queryKey: ['bots'] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const busy = action.isPending || topUp.isPending || remove.isPending;
+
+  const submitFunds = (): void => {
+    const n = Number(funds);
+    if (!Number.isFinite(n) || n <= 0) {
+      setError('amount must be a positive number');
+      return;
+    }
+    setError(null);
+    topUp.mutate(n);
+  };
+
+  return (
+    <div className="relative z-20 mt-3 border-t border-line pt-2">
+      <div className="flex flex-wrap items-center gap-1">
+        <Btn
+          tone="go"
+          onClick={() => action.mutate('start')}
+          disabled={busy || bot.status === 'running' || bot.status === 'busted'}
+          title={bot.status === 'busted' ? 'a busted bot must be reset first' : undefined}
+        >
+          start
+        </Btn>
+        <Btn tone="warn" onClick={() => action.mutate('stop')} disabled={busy || bot.status === 'stopped'}>
+          stop
+        </Btn>
+        <Btn onClick={() => { setError(null); setFunds(funds === null ? '100' : null); }} disabled={busy}>
+          add funds
+        </Btn>
+        <Btn
+          tone="danger"
+          onClick={() => {
+            if (
+              window.confirm(
+                `Delete ${bot.name}? This removes the bot and ALL of its history — decisions, fills, positions, equity, journal and indicator stats. Cannot be undone.`,
+              )
+            ) {
+              setError(null);
+              remove.mutate();
+            }
+          }}
+          disabled={busy || bot.status === 'running'}
+          title={bot.status === 'running' ? 'stop the bot before deleting it' : undefined}
+        >
+          delete
+        </Btn>
+      </div>
+
+      {funds !== null && (
+        <div className="mt-2 flex items-center gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-muted">add $</span>
+          <input
+            type="number"
+            min="1"
+            step="10"
+            className="w-24 py-0.5 text-xs"
+            value={funds}
+            autoFocus
+            onChange={(e) => setFunds(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submitFunds()}
+          />
+          <Btn tone="go" onClick={submitFunds} disabled={topUp.isPending}>
+            apply
+          </Btn>
+          <Btn onClick={() => setFunds(null)}>cancel</Btn>
+        </div>
+      )}
+
+      {error && <p className="mt-2 text-xs text-red">{error}</p>}
+    </div>
   );
 }

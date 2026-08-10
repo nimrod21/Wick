@@ -55,7 +55,13 @@ async function pollFunding(symbol: string): Promise<void> {
     try {
       const r = await fetch(url);
       if (!r.ok) {
-        logger.warn({ status: r.status, symbol }, 'funding: http error');
+        // 400 = this pair has no perpetual future, which is permanent and
+        // true for a chunk of the IMPL-6B watchlist — not a warning. The
+        // indicator simply sees `funding: null` and votes neutral.
+        logger[r.status === 400 ? 'debug' : 'warn'](
+          { status: r.status, symbol },
+          'funding: http error',
+        );
         return null;
       }
       return (await r.json()) as PremiumIndexResponse;

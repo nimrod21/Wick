@@ -9,7 +9,7 @@
  * exponential backoff (1s → 30s, reset on any received frame).
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   BotStatusEvent,
   CandleEvent,
@@ -162,6 +162,58 @@ export function useLive<K extends EventKind>(
       ref.current(event as Extract<WickEvent, { kind: K }>);
     });
   }, [key]);
+}
+
+/** Live price per symbol, plus what a chip needs to flash it. */
+export interface LiveTick {
+  price: number;
+  dir: 'up' | 'down';
+  /** Bumped on every tick, including repeats at the same price. */
+  seq: number;
+}
+
+/** How often batched ticks are flushed to React state (5 Hz). */
+const TICK_FLUSH_MS = 200;
+
+/**
+ * Every symbol's live price, batched.
+ *
+ * The server already caps ticks at 2/s per symbol, but at the IMPL-6B
+ * watchlist size that is still ~100 events/s — one setState each would
+ * re-render the whole chip strip a hundred times a second. Ticks accumulate
+ * in a ref and flush on a 200 ms timer instead, so the render cost is flat in
+ * the number of symbols and the flash animation still fires per batch.
+ */
+export function useLiveTicks(): Record<string, LiveTick> {
+  const [ticks, setTicks] = useState<Record<string, LiveTick>>({});
+  const pending = useRef<Record<string, LiveTick>>({});
+  const dirty = useRef(false);
+
+  useLive('tick', (e) => {
+    const prev = pending.current[e.symbol];
+    pending.current[e.symbol] = {
+      price: e.price,
+      dir:
+        prev === undefined || prev.price === e.price
+          ? (prev?.dir ?? 'up')
+          : e.price > prev.price
+            ? 'up'
+            : 'down',
+      seq: (prev?.seq ?? 0) + 1,
+    };
+    dirty.current = true;
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!dirty.current) return;
+      dirty.current = false;
+      setTicks({ ...pending.current });
+    }, TICK_FLUSH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  return ticks;
 }
 
 // Narrowing helpers so components can keep their handlers typed.

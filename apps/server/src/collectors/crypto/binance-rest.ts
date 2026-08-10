@@ -22,6 +22,20 @@ const BASE_URL = 'https://api.binance.com';
 const KLINES_PATH = '/api/v3/klines';
 const BACKFILL_LIMIT = 500;
 
+/** Watchlist seeding (IMPL-6B): how many USDT pairs the first boot installs. */
+const SEED_TARGET = 50;
+/** A list this long is the user's own — seed it once, never re-seed. */
+const SEED_MARKER = 'watchlist.top_seeded';
+/**
+ * Bases that are not a crypto trade, matched by naming convention rather than
+ * a list that would need maintaining: `USD…` (USDC, USD1, USDP, USDE…),
+ * `…USD` (FDUSD, RLUSD, PYUSD…) and `EUR…` cover the stablecoins, the rest
+ * are fiat tokens and metal trackers (the macro board already owns gold).
+ * Leveraged UP/DOWN/BULL/BEAR/3L/3S products are excluded separately.
+ */
+const STABLE_BASES = /^USD|USD$|^EUR|^(DAI|FRAX|GBP|TRY|BRL|ARS|JPY|PAXG|XAUT)$/;
+const LEVERAGED_BASES = /(UP|DOWN|BULL|BEAR)$|\d(L|S)$/;
+
 /** Timeframes Wick stores (PLAN §6). */
 export const WICK_TFS = ['1m', '15m', '1h', '4h', '1d'] as const satisfies readonly Timeframe[];
 export type WickTf = (typeof WICK_TFS)[number];
@@ -69,6 +83,111 @@ export function getActiveSymbols(): string[] {
     .prepare(`SELECT symbol FROM assets WHERE active = 1 ORDER BY symbol`)
     .all() as Array<{ symbol: string }>;
   return rows.map((r) => r.symbol);
+}
+
+/**
+ * exchangeInfo gate for the watchlist: a symbol only counts if Binance spot
+ * trades it right now. Cached 1h — the list is ~2500 symbols and changes
+ * rarely. On a network failure callers get `null` and must REJECT the add
+ * (better a retry than a symbol the collectors can never fill).
+ */
+let symbolCache: { ts: number; symbols: Set<string> } | null = null;
+const SYMBOL_CACHE_TTL_MS = 60 * 60_000;
+
+export async function tradableSymbols(): Promise<Set<string> | null> {
+  if (symbolCache && nowMs() - symbolCache.ts < SYMBOL_CACHE_TTL_MS) return symbolCache.symbols;
+  try {
+    const res = await fetch(`${BASE_URL}/api/v3/exchangeInfo?permissions=SPOT`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { symbols?: Array<{ symbol?: string; status?: string }> };
+    if (!Array.isArray(body.symbols)) return null;
+    const set = new Set<string>();
+    for (const s of body.symbols) {
+      if (typeof s.symbol === 'string' && s.status === 'TRADING') set.add(s.symbol.toUpperCase());
+    }
+    if (set.size === 0) return null;
+    symbolCache = { ts: nowMs(), symbols: set };
+    return set;
+  } catch (err) {
+    logger.warn({ err }, 'exchangeInfo fetch failed');
+    return null;
+  }
+}
+
+/**
+ * One-time watchlist expansion (IMPL-6B): top-`SEED_TARGET` Binance USDT
+ * pairs by 24h quote volume, appended AFTER the seven seeded defaults (which
+ * keep their earlier `added_ts`, so "the 7 first" survives every ordering).
+ *
+ * Runs at boot before the WS/backfill so the collectors see the full list on
+ * the first pass. Guarded by a settings marker rather than a row count: once
+ * seeded, a watchlist the user has since trimmed is never refilled behind
+ * their back. A failed fetch leaves the marker unset — it simply retries next
+ * boot, and the 7 defaults keep the app running meanwhile.
+ */
+export async function seedTopVolumeSymbols(): Promise<void> {
+  const marked = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(SEED_MARKER);
+  if (marked) return;
+
+  const { count } = db.prepare('SELECT COUNT(*) AS count FROM assets').get() as { count: number };
+  const markDone = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  if (count >= SEED_TARGET) {
+    markDone.run(SEED_MARKER, JSON.stringify({ ts: nowMs(), added: 0, reason: 'already full' }));
+    return;
+  }
+
+  const tradable = await tradableSymbols();
+  if (tradable === null) {
+    logger.warn('watchlist seed: exchangeInfo unavailable, will retry next boot');
+    return;
+  }
+
+  let tickers: Array<{ symbol: string; quoteVolume: string }>;
+  try {
+    const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`ticker/24hr ${res.status}`);
+    tickers = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
+  } catch (err) {
+    logger.warn({ err }, 'watchlist seed: 24h ticker unavailable, will retry next boot');
+    return;
+  }
+
+  const existing = new Set(
+    (db.prepare('SELECT symbol FROM assets').all() as Array<{ symbol: string }>).map(
+      (r) => r.symbol,
+    ),
+  );
+  const ranked = tickers
+    .filter((t) => typeof t.symbol === 'string' && t.symbol.endsWith('USDT'))
+    .map((t) => ({ symbol: t.symbol, base: t.symbol.slice(0, -4), volume: Number(t.quoteVolume) }))
+    .filter(
+      (t) =>
+        Number.isFinite(t.volume) &&
+        t.volume > 0 &&
+        tradable.has(t.symbol) &&
+        !existing.has(t.symbol) &&
+        !STABLE_BASES.test(t.base) &&
+        !LEVERAGED_BASES.test(t.base),
+    )
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, Math.max(0, SEED_TARGET - count));
+
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO assets (symbol, display_name, active, added_ts) VALUES (?, ?, 1, ?)',
+  );
+  const ts = nowMs();
+  db.transaction(() => {
+    for (const r of ranked) insert.run(r.symbol, r.base, ts);
+    markDone.run(SEED_MARKER, JSON.stringify({ ts, added: ranked.length }));
+  })();
+  logger.info(
+    { added: ranked.length, total: count + ranked.length, top: ranked.slice(0, 5).map((r) => r.base) },
+    'watchlist seeded from 24h volume',
+  );
 }
 
 async function fetchKlines(
@@ -139,7 +258,9 @@ function insertClosedRows(symbol: string, tf: WickTf, rows: BinanceKlineRow[]): 
 
 /**
  * Boot backfill: newest 500 klines per (active symbol × tf) for
- * 1m/15m/1h/4h/1d. 7 symbols × 5 tfs = 35 requests ≈ 6 s at 160 ms spacing.
+ * 1m/15m/1h/4h/1d. At the IMPL-6B watchlist size that is 50 × 5 = 250
+ * requests ≈ 45 s at 160 ms spacing (weight 2 each → ~750/min, well inside
+ * Binance's 1200/min budget). Staged/lazy backfill is therefore unnecessary.
  */
 export async function backfillAll(): Promise<void> {
   const symbols = getActiveSymbols();

@@ -3,8 +3,8 @@
  * module owns its config shape, CRUD, start/stop/reset and the busted check.
  *
  * Config defaults come from PLAN §8/§10 via the `guards.defaults` settings
- * row (data, not code); symbols default to the active watchlist and
- * provider_order to the live registry order.
+ * row (data, not code); symbols default to the core of the active watchlist
+ * (see DEFAULT_BOT_SYMBOLS) and provider_order to the live registry order.
  *
  * All SQL is prepared inside functions (module-level prepare crashes on a
  * fresh DB before migrations run). All ts values are UTC ms.
@@ -15,7 +15,6 @@ import { db } from '../db/client.js';
 import { eventBus } from '../core/event-bus.js';
 import { logger } from '../util/logger.js';
 import { nowMs } from '../util/time.js';
-import { getActiveSymbols } from '../collectors/crypto/binance-rest.js';
 import { getProviders } from '../llm/providers.js';
 import { equity, getBot, getDrawdown, getPositions, midPrice, type BotRow } from '../paper/engine.js';
 import { GUARD_DEFAULTS } from '../paper/risk-guards.js';
@@ -42,6 +41,15 @@ export interface BotConfig {
 }
 
 export const DEFAULT_DRAWDOWN_KILL_PCT = 50;
+
+/**
+ * How many watchlist symbols a NEW bot watches by default. Since IMPL-6B the
+ * watchlist is ~50 symbols and every symbol is a block in the LLM prompt, so
+ * the default is the core of the list (oldest-added first = the seeded
+ * majors), not all of it. Existing bots keep whatever they were configured
+ * with; the picker still offers the whole watchlist.
+ */
+const DEFAULT_BOT_SYMBOLS = 8;
 
 interface GuardDefaultsRow {
   min_confidence?: number;
@@ -70,7 +78,11 @@ function readGuardDefaults(): GuardDefaultsRow {
 /** Full config with every field populated (settings → PLAN defaults). */
 export function defaultConfig(overrides: Partial<BotConfig> = {}): BotConfig {
   const g = readGuardDefaults();
-  const symbols = getActiveSymbols();
+  const symbols = (
+    db
+      .prepare('SELECT symbol FROM assets WHERE active = 1 ORDER BY added_ts, symbol LIMIT ?')
+      .all(DEFAULT_BOT_SYMBOLS) as Array<{ symbol: string }>
+  ).map((r) => r.symbol);
   return {
     cadence_tf: '1h',
     symbols: symbols.length > 0 ? symbols : ['BTCUSDT'],

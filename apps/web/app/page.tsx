@@ -1,17 +1,18 @@
 'use client';
 
 /**
- * DASHBOARD — the glance (IMPL-5, LAYOUT.md).
+ * DASHBOARD — the glance (IMPL-5, LAYOUT.md), now an ASSET VIEW (IMPL-6C).
  *
- * Chips on top, one big chart in the middle, three teaser panels down the
- * right, the bot fleet along the bottom. Nothing deep lives here: every panel
- * is a link into the page that owns that depth (/indicators, /intel, /bots,
- * /trade), and the decision feed that used to sit here now lives on the bot
- * pages where a decision has context.
+ * Chips on top, one big chart in the middle under its asset-context header,
+ * and a right column that is ABOUT the selected asset: its indicator votes,
+ * its tagged news, whale flow in its context. Picking a chip re-points all of
+ * it at once — no navigation, no second page. Market-wide readings (SIGNALS
+ * NOW, the macro board) sit in their own row below, and the bot fleet along
+ * the bottom.
  *
- * The centre is one `<ChartPane>` fed a single symbol. A 2×2 grid variant was
- * explicitly left open (LAYOUT.md): it would swap this one component out, not
- * rework the page, which is why the chart owns its own timeframe/candle state.
+ * Nothing deep lives here: every panel is a link into the page that owns that
+ * depth (/indicators, /intel, /bots, /trade). The old /market page was this
+ * view with a worse chart and is gone; its API routes are untouched.
  */
 
 import { useState } from 'react';
@@ -19,13 +20,14 @@ import dynamic from 'next/dynamic';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, TIMEFRAMES, type Tf } from '@/lib/api';
 import { useLive } from '@/lib/sse';
-import { ChipStrip } from '@/components/dashboard/ChipStrip';
+import { ChipStrip, MacroChips } from '@/components/dashboard/ChipStrip';
+import { AssetPanel } from '@/components/dashboard/AssetPanel';
 import { SignalsPanel } from '@/components/dashboard/SignalsPanel';
 import { WhalesPanel } from '@/components/dashboard/WhalesPanel';
 import { NewsPanel } from '@/components/dashboard/NewsPanel';
 import { BotStrip } from '@/components/dashboard/BotStrip';
-import { Empty, Panel, PixelTitle } from '@/components/ui';
-import { pct, price } from '@/lib/format';
+import { Empty, Panel, PixelTitle, Stat } from '@/components/ui';
+import { pct, price, shortSymbol } from '@/lib/format';
 
 // lightweight-charts touches `document` at import time (IMPL-4 pitfall 1).
 const CandleChart = dynamic(() => import('@/components/charts/CandleChart').then((m) => m.CandleChart), {
@@ -35,6 +37,7 @@ const CandleChart = dynamic(() => import('@/components/charts/CandleChart').then
 
 export default function DashboardPage() {
   const [symbol, setSymbol] = useState('BTCUSDT');
+  const asset = shortSymbol(symbol);
 
   return (
     <div className="space-y-4">
@@ -45,10 +48,15 @@ export default function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <ChartPane symbol={symbol} />
         <div className="space-y-4">
-          <SignalsPanel />
-          <WhalesPanel />
-          <NewsPanel />
+          <AssetPanel symbol={symbol} />
+          <NewsPanel asset={asset} />
+          <WhalesPanel asset={asset} />
         </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <SignalsPanel />
+        <MacroChips />
       </div>
 
       <BotStrip />
@@ -56,7 +64,7 @@ export default function DashboardPage() {
   );
 }
 
-/** The one big chart. Swap this component for a grid to change the centre. */
+/** The one big chart, under the selected asset's 24h context. */
 function ChartPane({ symbol }: { symbol: string }) {
   const qc = useQueryClient();
   const [tf, setTf] = useState<Tf>('1h');
@@ -82,6 +90,12 @@ function ChartPane({ symbol }: { symbol: string }) {
 
   const row = summary.data?.symbols.find((s) => s.symbol === symbol);
   const lastPrice = tick?.symbol === symbol ? tick.price : (row?.lastPrice ?? null);
+  const changeClass =
+    row?.changePct24h === null || row?.changePct24h === undefined
+      ? 'text-muted'
+      : row.changePct24h >= 0
+        ? 'text-green'
+        : 'text-red';
 
   return (
     <Panel
@@ -89,15 +103,7 @@ function ChartPane({ symbol }: { symbol: string }) {
         <span className="flex items-baseline gap-2">
           <span className="text-fg">{symbol}</span>
           <span className="tnum normal-case tracking-normal">{price(lastPrice)}</span>
-          <span
-            className={`tnum normal-case tracking-normal ${
-              row?.changePct24h === null || row?.changePct24h === undefined
-                ? 'text-muted'
-                : row.changePct24h >= 0
-                  ? 'text-green'
-                  : 'text-red'
-            }`}
-          >
+          <span className={`tnum normal-case tracking-normal ${changeClass}`}>
             {pct(row?.changePct24h ?? null)}
           </span>
         </span>
@@ -118,6 +124,22 @@ function ChartPane({ symbol }: { symbol: string }) {
       }
       bodyClassName="p-0"
     >
+      <div className="grid grid-cols-2 gap-2 border-b border-line p-3 sm:grid-cols-4">
+        <Stat label="last" value={price(lastPrice)} />
+        <Stat label="24h" value={pct(row?.changePct24h ?? null)} valueClass={changeClass} />
+        <Stat
+          label="24h high / low"
+          value={`${price(row?.high24h ?? null)} / ${price(row?.low24h ?? null)}`}
+        />
+        <Stat
+          label={`24h volume (${shortSymbol(symbol)})`}
+          value={
+            row?.volume24h == null
+              ? '—'
+              : row.volume24h.toLocaleString('en-US', { maximumFractionDigits: 0 })
+          }
+        />
+      </div>
       {(candles.data?.length ?? 0) === 0 ? (
         <Empty>
           {candles.isLoading ? 'loading candles…' : `no candles for ${symbol} ${tf}`}

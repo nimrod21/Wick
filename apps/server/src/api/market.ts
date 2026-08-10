@@ -96,6 +96,13 @@ export async function registerMarketRoutes(app: FastifyInstance): Promise<void> 
         displayName: a.display_name,
         lastPrice,
         changePct24h,
+        // Asset-context header on the dashboard (IMPL-6C). Straight off the
+        // @miniTicker cache — null until the first frame, never back-filled
+        // from candles (a 24h window stitched from stored bars would disagree
+        // with the exchange's own rolling window).
+        high24h: stats?.high24h ?? null,
+        low24h: stats?.low24h ?? null,
+        volume24h: stats?.volume24h ?? null,
         votes,
       };
     });

@@ -4,6 +4,11 @@
  * NEWS teaser (IMPL-5): the five freshest headlines with their asset tags,
  * linking into Intel / News for filters and the full feed.
  *
+ * With an `asset` (IMPL-6C: the dashboard's selected symbol) it shows that
+ * asset's tagged headlines — and falls back to the market feed when the
+ * tagger has nothing for it, which is the normal case for the long tail of a
+ * 50-symbol watchlist. The fallback says so rather than showing an empty box.
+ *
  * Sentiment stays nullable here for the same reason it is on the Intel tab —
  * a headline with no sentiment word has no read, which is not the same as a
  * neutral one, so it renders as a dim dot rather than a zero.
@@ -23,23 +28,31 @@ function sentimentClass(score: number | null): string {
   return score > 0.05 ? 'bg-green' : score < -0.05 ? 'bg-red' : 'bg-line';
 }
 
-export function NewsPanel() {
+export function NewsPanel({ asset }: { asset?: string }) {
   const qc = useQueryClient();
-  const news = useQuery({
+  const market = useQuery({
     queryKey: ['intel-news', 'dashboard'],
     queryFn: () => api.news({ limit: TOP_N }),
     refetchInterval: 120_000,
+  });
+  const tagged = useQuery({
+    queryKey: ['intel-news', 'tagged', asset],
+    queryFn: () => api.news({ asset, limit: TOP_N }),
+    refetchInterval: 120_000,
+    enabled: asset !== undefined,
   });
 
   useLive('news', () => {
     void qc.invalidateQueries({ queryKey: ['intel-news'] });
   });
 
+  const news = asset !== undefined && (tagged.data?.items.length ?? 0) > 0 ? tagged : market;
   const items = news.data?.items ?? [];
+  const untagged = asset !== undefined && tagged.isSuccess && tagged.data.items.length === 0;
 
   return (
     <Panel
-      title="News"
+      title={untagged ? `News — no ${asset} tags` : asset !== undefined ? `News — ${asset}` : 'News'}
       right={
         <Link href="/intel?tab=news" className="text-[10px] uppercase tracking-wider text-muted hover:text-cyan">
           full feed →

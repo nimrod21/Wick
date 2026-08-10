@@ -124,9 +124,11 @@ export function LiveGrid({
       }
       bodyClassName="p-0"
     >
-      <div className="overflow-x-auto">
+      {/* ~50 symbols since IMPL-6B: the grid scrolls in both axes inside the
+          panel, with the header row pinned so the columns stay readable. */}
+      <div className="max-h-[70vh] overflow-auto">
         <table className="w-full text-xs">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-panel">
             <tr className="border-b border-line text-[10px] uppercase tracking-wider text-muted">
               <th className="px-2 py-1 text-left font-normal">symbol</th>
               {defs.map((d) => (

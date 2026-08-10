@@ -1,23 +1,29 @@
 'use client';
 
 /**
- * Dashboard chip strip (IMPL-5 / LAYOUT.md): the whole watchlist plus the
- * macro board on one line — live price, 24h change, and a flash on every tick.
+ * Dashboard chip strip — the whole watchlist on one line, live price, 24h
+ * change, and a flash on every tick. Clicking a chip re-points the entire
+ * dashboard (chart AND right column) at that asset; it never navigates.
  *
- * Two kinds of chip, deliberately different targets:
- *   crypto → selects the big chart on this page (no navigation)
- *   macro  → deep-links to Intel's macro tab, which owns the depth
+ * Built for ~50 symbols (IMPL-6B): the row scrolls horizontally and can be
+ * dragged with the mouse, a search box filters it down, and starred symbols
+ * pin themselves to the front. Stars live in localStorage — they reorder the
+ * view, they are not a server-side watchlist edit.
  *
- * Crypto prices are patched from the SSE `tick` topic and only fall back to
- * the 60s `/api/market/summary` refetch; macro quotes are polled upstream
- * every 10 minutes, so their chips just follow `/api/intel/macro`.
+ * Prices come from the batched SSE `tick` feed (`useLiveTicks`, 5 Hz) and
+ * only fall back to the 60s `/api/market/summary` refetch.
+ *
+ * The macro board is a SEPARATE export: at 50 crypto chips it no longer
+ * belongs on the same scrolling line, so the dashboard renders it with the
+ * other market-wide panels.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useLive } from '@/lib/sse';
+import { useLive, useLiveTicks, type LiveTick } from '@/lib/sse';
+import { favoritesFirst, useFavorites } from '@/lib/prefs';
 import { Empty } from '@/components/ui';
 import { pct, price, shortSymbol } from '@/lib/format';
 
@@ -29,11 +35,8 @@ const MACRO_CHIPS: Array<{ name: string; label: string }> = [
   { name: 'dxy', label: 'DXY' },
 ];
 
-interface Tick {
-  price: number;
-  dir: 'up' | 'down';
-  seq: number;
-}
+/** Past this many pixels a pointer gesture is a scroll, not a chip click. */
+const DRAG_SLOP_PX = 4;
 
 /** Restart the flash animation on every tick, including repeats. */
 function useFlash(seq: number | undefined, dir: 'up' | 'down' | undefined) {
@@ -57,6 +60,47 @@ function chipClass(selected: boolean): string {
   }`;
 }
 
+/**
+ * Drag-to-scroll for a horizontally scrolling row. Returns the ref to attach
+ * plus `wasDragged()`, which a child click handler uses to ignore the click
+ * that ends a drag.
+ */
+function useDragScroll() {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef({ active: false, startX: 0, startLeft: 0, moved: 0 });
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    // Let the search box keep normal text selection/caret behaviour.
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const el = ref.current;
+    if (!el) return;
+    drag.current = { active: true, startX: e.clientX, startLeft: el.scrollLeft, moved: 0 };
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    const el = ref.current;
+    if (!el || !drag.current.active) return;
+    const dx = e.clientX - drag.current.startX;
+    drag.current.moved = Math.max(drag.current.moved, Math.abs(dx));
+    if (drag.current.moved > DRAG_SLOP_PX) el.scrollLeft = drag.current.startLeft - dx;
+  };
+
+  const endDrag = (): void => {
+    drag.current.active = false;
+  };
+
+  return {
+    ref,
+    wasDragged: (): boolean => drag.current.moved > DRAG_SLOP_PX,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerLeave: endDrag,
+    },
+  };
+}
+
 function CryptoChip({
   symbol,
   label,
@@ -64,32 +108,46 @@ function CryptoChip({
   changePct,
   tick,
   selected,
+  starred,
   onSelect,
+  onStar,
 }: {
   symbol: string;
   label: string;
   lastPrice: number | null;
   changePct: number | null;
-  tick: Tick | undefined;
+  tick: LiveTick | undefined;
   selected: boolean;
+  starred: boolean;
   onSelect: () => void;
+  onStar: () => void;
 }) {
   const ref = useFlash(tick?.seq, tick?.dir);
   const shown = tick?.price ?? lastPrice;
   return (
-    <button type="button" onClick={onSelect} className={chipClass(selected)} title={symbol}>
-      <span ref={ref} className={`text-[11px] uppercase ${selected ? 'text-cyan' : 'text-muted'}`}>
-        {label}
-      </span>
-      <span className="tnum text-xs">{price(shown)}</span>
-      <span
-        className={`tnum text-[10px] ${
-          changePct === null ? 'text-muted' : changePct >= 0 ? 'text-green' : 'text-red'
-        }`}
+    <span className={chipClass(selected)} title={symbol}>
+      <button
+        type="button"
+        onClick={onStar}
+        title={starred ? 'unpin' : 'pin to the front'}
+        className={`text-[10px] leading-none ${starred ? 'text-amber' : 'text-line hover:text-amber'}`}
       >
-        {pct(changePct, 1)}
-      </span>
-    </button>
+        {starred ? '★' : '☆'}
+      </button>
+      <button type="button" onClick={onSelect} className="flex items-baseline gap-2 text-left">
+        <span ref={ref} className={`text-[11px] uppercase ${selected ? 'text-cyan' : 'text-muted'}`}>
+          {label}
+        </span>
+        <span className="tnum text-xs">{price(shown)}</span>
+        <span
+          className={`tnum text-[10px] ${
+            changePct === null ? 'text-muted' : changePct >= 0 ? 'text-green' : 'text-red'
+          }`}
+        >
+          {pct(changePct, 1)}
+        </span>
+      </button>
+    </span>
   );
 }
 
@@ -100,51 +158,78 @@ export function ChipStrip({
   symbol: string;
   onSelectSymbol: (symbol: string) => void;
 }) {
-  const qc = useQueryClient();
   const summary = useQuery({ queryKey: ['market-summary'], queryFn: api.summary, refetchInterval: 60_000 });
+  const ticks = useLiveTicks();
+  const [favs, toggleFav] = useFavorites();
+  const [filter, setFilter] = useState('');
+  const strip = useDragScroll();
+
+  const needle = filter.trim().toUpperCase();
+  const rows = favoritesFirst(
+    (summary.data?.symbols ?? []).filter((s) => s.symbol.includes(needle)),
+    favs,
+    (s) => s.symbol,
+  );
+
+  return (
+    <div className="panel flex items-center gap-2 p-2">
+      <input
+        type="search"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="filter"
+        aria-label="filter watchlist"
+        className="w-20 shrink-0 border border-line bg-transparent px-1.5 py-1 text-[11px] uppercase placeholder:text-muted focus:border-cyan focus:outline-none"
+      />
+      <div
+        ref={strip.ref}
+        {...strip.handlers}
+        className="flex flex-1 select-none items-center gap-2 overflow-x-auto pb-1"
+        title="drag or scroll sideways"
+      >
+        {summary.isError && <Empty>market summary unavailable</Empty>}
+        {!summary.isError && rows.length === 0 && (
+          <span className="px-1 text-[11px] text-muted">
+            {summary.isLoading ? 'loading watchlist…' : `no symbol matches “${filter}”`}
+          </span>
+        )}
+        {rows.map((s) => (
+          <CryptoChip
+            key={s.symbol}
+            symbol={s.symbol}
+            label={shortSymbol(s.symbol)}
+            lastPrice={s.lastPrice}
+            changePct={s.changePct24h}
+            tick={ticks[s.symbol]}
+            selected={s.symbol === symbol}
+            starred={favs.has(s.symbol)}
+            onSelect={() => {
+              if (!strip.wasDragged()) onSelectSymbol(s.symbol);
+            }}
+            onStar={() => {
+              if (!strip.wasDragged()) toggleFav(s.symbol);
+            }}
+          />
+        ))}
+      </div>
+      <span className="shrink-0 text-[10px] text-muted">{rows.length}</span>
+    </div>
+  );
+}
+
+/** The macro board — market-wide, so it sits with the global panels. */
+export function MacroChips() {
+  const qc = useQueryClient();
   const macro = useQuery({ queryKey: ['intel-macro'], queryFn: api.macro, refetchInterval: 120_000 });
-
-  const [ticks, setTicks] = useState<Record<string, Tick>>({});
-  const lastRef = useRef<Record<string, number>>({});
-
-  useLive('tick', (e) => {
-    const prev = lastRef.current[e.symbol];
-    lastRef.current[e.symbol] = e.price;
-    setTicks((s) => ({
-      ...s,
-      [e.symbol]: {
-        price: e.price,
-        dir: prev === undefined || prev === e.price ? (s[e.symbol]?.dir ?? 'up') : e.price > prev ? 'up' : 'down',
-        seq: (s[e.symbol]?.seq ?? 0) + 1,
-      },
-    }));
-  });
 
   useLive('macro', () => {
     void qc.invalidateQueries({ queryKey: ['intel-macro'] });
   });
 
-  const symbols = summary.data?.symbols ?? [];
   const tiles = macro.data?.tiles ?? [];
 
   return (
     <div className="panel flex flex-wrap items-center gap-2 p-2">
-      {summary.isError && <Empty>market summary unavailable</Empty>}
-      {symbols.map((s) => (
-        <CryptoChip
-          key={s.symbol}
-          symbol={s.symbol}
-          label={shortSymbol(s.symbol)}
-          lastPrice={s.lastPrice}
-          changePct={s.changePct24h}
-          tick={ticks[s.symbol]}
-          selected={s.symbol === symbol}
-          onSelect={() => onSelectSymbol(s.symbol)}
-        />
-      ))}
-
-      <span className="mx-1 h-6 w-px shrink-0 bg-line" aria-hidden />
-
       {MACRO_CHIPS.map((m) => {
         const tile = tiles.find((t) => t.name === m.name);
         return (

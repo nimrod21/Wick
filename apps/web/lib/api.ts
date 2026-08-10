@@ -89,6 +89,10 @@ export const MarketSymbolSchema = z.object({
   displayName: z.string(),
   lastPrice: nullNum,
   changePct24h: nullNum,
+  /** 24h rolling stats — null until the symbol's first @miniTicker frame. */
+  high24h: nullNum,
+  low24h: nullNum,
+  volume24h: nullNum,
   votes: z.record(z.string(), z.string().nullable()),
 });
 export type MarketSymbol = z.infer<typeof MarketSymbolSchema>;

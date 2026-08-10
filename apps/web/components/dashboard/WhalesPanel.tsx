@@ -6,6 +6,11 @@
  *
  * The floor is applied server-side (`minUsd`) so "above threshold" means the
  * same thing here as it does on the Intel tab — a $200k shuffle is not news.
+ *
+ * Whale data is CHAIN-level, not per-asset: the only collector with a key is
+ * BTC. So `asset` (IMPL-6C) changes what the panel claims, never what it
+ * queries — for BTC it is that asset's own flow, for anything else it is
+ * market context and says so.
  */
 
 import Link from 'next/link';
@@ -25,7 +30,7 @@ const DIRECTION = {
   internal: { arrow: '↔', cls: 'text-muted', label: 'internal / non-exchange' },
 } as const;
 
-export function WhalesPanel() {
+export function WhalesPanel({ asset }: { asset?: string }) {
   const qc = useQueryClient();
   const whales = useQuery({
     queryKey: ['intel-whales', MIN_USD],
@@ -38,10 +43,15 @@ export function WhalesPanel() {
   });
 
   const moves = whales.data ?? [];
+  const ownChain = asset === 'BTC';
 
   return (
     <Panel
-      title={`Whales ≥ ${usd(MIN_USD, 0)}`}
+      title={
+        <span title={ownChain ? undefined : 'BTC chain — the only whale collector with a key; market context for other assets'}>
+          {ownChain ? `Whales — ${asset}` : 'Whales — BTC chain'} ≥ {usd(MIN_USD, 0)}
+        </span>
+      }
       right={
         <Link href="/intel?tab=whales" className="text-[10px] uppercase tracking-wider text-muted hover:text-cyan">
           whale log →

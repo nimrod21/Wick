@@ -11,7 +11,7 @@ const LINKS = [
   { href: '/', label: 'DASH' },
   { href: '/trade', label: 'TRADE' },
   { href: '/bots', label: 'BOTS' },
-  { href: '/market', label: 'MARKET' },
+  // /market was absorbed by the dashboard's asset view (IMPL-6C).
   { href: '/indicators', label: 'INDICATORS' },
   { href: '/intel', label: 'INTEL' },
   { href: '/settings', label: 'SETTINGS' },

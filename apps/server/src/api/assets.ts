@@ -1,41 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { request as undiciRequest } from 'undici';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { nowMs } from '../util/time.js';
-import { logger } from '../util/logger.js';
-
-/**
- * Binance exchangeInfo gate for the Phase-6 watchlist editor: a symbol only
- * enters the watchlist if Binance spot trades it. Cached 1h — the list is
- * ~2500 symbols and changes rarely. On a network failure the add is REJECTED
- * (better a retry than a symbol the collectors can never fill).
- */
-let symbolCache: { ts: number; symbols: Set<string> } | null = null;
-const SYMBOL_CACHE_TTL_MS = 60 * 60_000;
-
-async function tradableSymbols(): Promise<Set<string> | null> {
-  if (symbolCache && nowMs() - symbolCache.ts < SYMBOL_CACHE_TTL_MS) return symbolCache.symbols;
-  try {
-    const res = await undiciRequest('https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT', {
-      headersTimeout: 15_000,
-      bodyTimeout: 15_000,
-    });
-    if (res.statusCode !== 200) return null;
-    const body = (await res.body.json()) as { symbols?: Array<{ symbol?: string; status?: string }> };
-    if (!Array.isArray(body.symbols)) return null;
-    const set = new Set<string>();
-    for (const s of body.symbols) {
-      if (typeof s.symbol === 'string' && s.status === 'TRADING') set.add(s.symbol.toUpperCase());
-    }
-    if (set.size === 0) return null;
-    symbolCache = { ts: nowMs(), symbols: set };
-    return set;
-  } catch (err) {
-    logger.warn({ err }, 'exchangeInfo fetch failed');
-    return null;
-  }
-}
+// The exchangeInfo gate lives with the rest of the Binance REST access
+// (the boot watchlist seeder needs the same cached list).
+import { tradableSymbols } from '../collectors/crypto/binance-rest.js';
 
 const postBodySchema = z.object({
   symbol: z.string().min(1),

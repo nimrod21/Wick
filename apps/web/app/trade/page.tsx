@@ -19,7 +19,8 @@ import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, fillReason, TIMEFRAMES, type ModelStat, type Tf } from '@/lib/api';
-import { useLive } from '@/lib/sse';
+import { useLive, useLiveTicks } from '@/lib/sse';
+import { favoritesFirst, useFavorites } from '@/lib/prefs';
 import type { TradeMarker } from '@/components/charts/CandleChart';
 import { AccountBox, OrderTicket } from '@/components/trade/OrderTicket';
 import { OpenPositions, TradeHistory } from '@/components/trade/Positions';
@@ -36,7 +37,10 @@ export default function TradePage() {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [tf, setTf] = useState<Tf>('1h');
   const [ghosts, setGhosts] = useState(true);
-  const [live, setLive] = useState<Record<string, number>>({});
+  const [filter, setFilter] = useState('');
+  const [favs, toggleFav] = useFavorites();
+  // Batched (see useLiveTicks): a 50-symbol watchlist pushes ~100 ticks/s.
+  const ticks = useLiveTicks();
 
   const summary = useQuery({ queryKey: ['market-summary'], queryFn: api.summary, refetchInterval: 60_000 });
   const candles = useQuery({ queryKey: ['candles', symbol, tf], queryFn: () => api.candles(symbol, tf, 400) });
@@ -58,9 +62,6 @@ export default function TradePage() {
   });
   const ghostSig = botFills.map((q) => `${q.data?.length ?? 0}:${q.dataUpdatedAt}`).join('|');
 
-  useLive('tick', (e) => {
-    setLive((s) => (s[e.symbol] === e.price ? s : { ...s, [e.symbol]: e.price }));
-  });
   useLive('fill', (e) => {
     if (e.botId === account.data?.botId) void qc.invalidateQueries({ queryKey: ['trade-account'] });
   });
@@ -110,19 +111,47 @@ export default function TradePage() {
         <YouVsBots models={models.data} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border border-line p-2">
-        {(summary.data?.symbols ?? []).map((s) => (
-          <button
-            key={s.symbol}
-            type="button"
-            onClick={() => setSymbol(s.symbol)}
-            className={`border px-2 py-0.5 text-[11px] ${
-              s.symbol === symbol ? 'border-cyan text-cyan' : 'border-line text-muted hover:text-fg'
-            }`}
-          >
-            {shortSymbol(s.symbol)}
-          </button>
-        ))}
+      {/* Same picker contract as the dashboard chip strip: search + starred
+          first, so a 50-symbol watchlist stays one keystroke away. */}
+      <div className="flex items-center gap-2 border border-line p-2">
+        <input
+          type="search"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="filter"
+          aria-label="filter symbols"
+          className="w-20 shrink-0 border border-line bg-transparent px-1.5 py-0.5 text-[11px] uppercase placeholder:text-muted focus:border-cyan focus:outline-none"
+        />
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          {favoritesFirst(
+            (summary.data?.symbols ?? []).filter((s) =>
+              s.symbol.includes(filter.trim().toUpperCase()),
+            ),
+            favs,
+            (s) => s.symbol,
+          ).map((s) => (
+            <span
+              key={s.symbol}
+              className={`flex items-center gap-1 border px-1.5 py-0.5 text-[11px] ${
+                s.symbol === symbol ? 'border-cyan text-cyan' : 'border-line text-muted'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => toggleFav(s.symbol)}
+                title={favs.has(s.symbol) ? 'unpin' : 'pin to the front'}
+                className={`text-[10px] leading-none ${
+                  favs.has(s.symbol) ? 'text-amber' : 'text-line hover:text-amber'
+                }`}
+              >
+                {favs.has(s.symbol) ? '★' : '☆'}
+              </button>
+              <button type="button" onClick={() => setSymbol(s.symbol)} className="hover:text-fg">
+                {shortSymbol(s.symbol)}
+              </button>
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
@@ -184,7 +213,10 @@ export default function TradePage() {
         {account.isError ? (
           <Empty>account unavailable — {String((account.error as Error).message)}</Empty>
         ) : (
-          <OpenPositions positions={account.data?.positions ?? []} live={live} />
+          <OpenPositions
+            positions={account.data?.positions ?? []}
+            live={Object.fromEntries(Object.entries(ticks).map(([sym, t]) => [sym, t.price]))}
+          />
         )}
       </Panel>
 

@@ -15,7 +15,7 @@ import { logger } from './util/logger.js';
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { buildServer } from './api/server.js';
-import { backfillAll } from './collectors/crypto/binance-rest.js';
+import { backfillAll, seedTopVolumeSymbols } from './collectors/crypto/binance-rest.js';
 import {
   flushKlineBuffer,
   startBinanceWs,
@@ -106,6 +106,10 @@ async function main(): Promise<void> {
   startHygiene();
   startEquityCron();
   startProtector(); // arms its SL/TP index once marketWarm fires below
+  // Watchlist expansion (IMPL-6B): one-time top-50-by-volume seed. Before the
+  // collectors start so WS subscriptions and the boot backfill cover the full
+  // list on the first pass; a failed fetch just leaves the 7 defaults.
+  await seedTopVolumeSymbols();
   seedDefaultBots(); // two default bots on first boot (idempotent by name)
   ensureHumanAccount(); // the human trading account (idempotent, never woken)
   await startBinanceWs();

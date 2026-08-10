@@ -7,7 +7,9 @@ export function usd(n: number | null | undefined, digits = 2): string {
 
 export function price(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
-  const digits = n >= 1000 ? 2 : n >= 1 ? 3 : 5;
+  // Sub-cent coins are a big slice of the IMPL-6B watchlist (PEPE, BONK…):
+  // at five digits they all print as 0.00000, so precision follows magnitude.
+  const digits = n >= 1000 ? 2 : n >= 1 ? 3 : n >= 0.01 ? 5 : 8;
   return n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 

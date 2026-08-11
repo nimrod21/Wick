@@ -229,26 +229,27 @@ export function AccountBox({ account }: { account?: TradeAccount }) {
         </Btn>
       </div>
 
-      {confirmReset ? (
-        <div className="space-y-1 border border-amber p-2">
-          <p className="text-[11px] text-amber">
-            reset flattens every position at mid and restores cash to{' '}
-            {usd(account?.bankrollStart ?? null, 0)}. Fills and decisions stay — that history is real.
-          </p>
-          <div className="flex gap-2">
+      {/* The confirm state swaps IN PLACE of the reset button — same row, same
+          height — and the warning uses the reserved status line below. The
+          panel never changes size (no layout shift; see the ticket's line). */}
+      <div className="flex gap-2">
+        {confirmReset ? (
+          <>
             <Btn tone="danger" disabled={reset.isPending} onClick={() => reset.mutate()}>
               confirm reset
             </Btn>
             <Btn onClick={() => setConfirmReset(false)}>cancel</Btn>
-          </div>
-        </div>
-      ) : (
-        <Btn tone="warn" onClick={() => setConfirmReset(true)}>
-          reset account
-        </Btn>
-      )}
+          </>
+        ) : (
+          <Btn tone="warn" onClick={() => setConfirmReset(true)}>
+            reset account
+          </Btn>
+        )}
+      </div>
 
-      {error && <p className="text-[11px] text-red">{error}</p>}
+      <p className={`min-h-[15px] text-[10px] ${error ? 'text-red' : 'text-amber'}`}>
+        {error ?? (confirmReset ? 'flattens positions at mid, cash back in — history stays' : ' ')}
+      </p>
     </div>
   );
 }
